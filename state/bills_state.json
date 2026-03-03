@@ -1,0 +1,133 @@
+{
+  "meta": {
+    "last_run_utc": "2026-03-03T08:57:00.605Z",
+    "max_update_date_seen": "2025-01-13"
+  },
+  "bills": {
+    "119-hres-27": {
+      "update_date": "2025-01-13",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hr-6": {
+      "update_date": "2025-01-14",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hr-9": {
+      "update_date": "2025-01-14",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hr-11": {
+      "update_date": "2025-01-14",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hr-13": {
+      "update_date": "2025-01-14",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hr-16": {
+      "update_date": "2025-01-14",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hr-19": {
+      "update_date": "2025-01-14",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hjres-8": {
+      "update_date": "2025-01-14",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-2": {
+      "update_date": "2025-01-15",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-3": {
+      "update_date": "2025-01-15",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-4": {
+      "update_date": "2025-01-15",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-9": {
+      "update_date": "2025-01-16",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-8": {
+      "update_date": "2025-01-16",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-sconres-3": {
+      "update_date": "2025-01-21",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-19": {
+      "update_date": "2025-01-22",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-7": {
+      "update_date": "2025-01-22",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hjres-21": {
+      "update_date": "2025-01-23",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hconres-1": {
+      "update_date": "2025-01-23",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-1": {
+      "update_date": "2025-01-23",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-sres-2": {
+      "update_date": "2025-01-23",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-sres-3": {
+      "update_date": "2025-01-23",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-sres-4": {
+      "update_date": "2025-01-23",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-11": {
+      "update_date": "2025-01-30",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-hres-10": {
+      "update_date": "2025-01-30",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    },
+    "119-sconres-2": {
+      "update_date": "2025-01-30",
+      "inputs_hash": null,
+      "ai_summary_version": "v0"
+    }
+  }
+}
