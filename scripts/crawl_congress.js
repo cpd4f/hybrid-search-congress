@@ -5,11 +5,10 @@
  * Notes:
  * - LIMIT_PER_RUN=0 means "all"
  * - INDEX_MODE:
- *   - upsert_new_updated (default)
- *   - upsert_new_updated_fix_tracking (rebuild state from Typesense first)
- *   - reindex_all
- *
- * - Congress API list sorting MUST be: sort=updateDate+desc (newest first)
+ *    - upsert_new_updated (default)
+ *    - upsert_new_updated_fix_tracking (export from Typesense -> rebuild state -> then proceed like upsert_new_updated)
+ *    - reindex_all
+ * - Congress API sometimes returns URLs without api_key; we sign them.
  */
 
 import fs from "fs";
@@ -47,11 +46,21 @@ function mustEnv(name) {
   if (!v) throw new Error(`Missing env var: ${name}`);
   return v;
 }
+function envBool(name, defaultVal = false) {
+  const v = process.env[name];
+  if (v === undefined || v === null || v === "") return defaultVal;
+  return String(v).trim().toLowerCase() === "true";
+}
 function envInt(name, defaultVal) {
   const v = process.env[name];
   if (v === undefined || v === null || v === "") return defaultVal;
   const n = parseInt(String(v), 10);
   return Number.isFinite(n) ? n : defaultVal;
+}
+function envStr(name, defaultVal = "") {
+  const v = process.env[name];
+  if (v === undefined || v === null || v === "") return defaultVal;
+  return String(v);
 }
 
 // ---------- state ----------
@@ -112,12 +121,8 @@ function safeLower(s) {
 function buildCongressListUrl(congress, limit, offset) {
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
   const key = mustEnv("CONGRESS_API_KEY");
-
-  // IMPORTANT: newest first
-  // Congress.gov API expects: sort=updateDate+desc or updateDate+asc
-  const sort = "updateDate+desc";
-
-  return `${base}/${congress}?format=json&sort=${encodeURIComponent(sort)}&limit=${limit}&offset=${offset}&api_key=${encodeURIComponent(
+  // IMPORTANT: use correct sort syntax so most recent is first
+  return `${base}/${congress}?format=json&sort=updateDate+desc&limit=${limit}&offset=${offset}&api_key=${encodeURIComponent(
     key
   )}`;
 }
@@ -135,7 +140,11 @@ function withCongressApiKey(url) {
   const key = mustEnv("CONGRESS_API_KEY");
   const u = new URL(url);
   if (!u.searchParams.has("api_key")) u.searchParams.set("api_key", key);
-  if (!u.searchParams.has("format")) u.searchParams.set("format", "json");
+  // Don’t force format=json on congress.gov HTML doc URLs (it’s harmless if ignored, but some servers might be picky)
+  // We only add format=json if the hostname looks like api.congress.gov
+  if (u.hostname.includes("api.congress.gov")) {
+    if (!u.searchParams.has("format")) u.searchParams.set("format", "json");
+  }
   return u.toString();
 }
 
@@ -156,7 +165,9 @@ async function fetchText(url, { label = "GET", retries = 3 } = {}) {
       }
 
       const retryable = [429, 500, 502, 503, 504].includes(res.statusCode);
-      warn(`HTTP ${res.statusCode} ${label} ${fmtMs(dur)} attempt ${attempt}/${retries} :: ${text.slice(0, 200)}`);
+      warn(
+        `HTTP ${res.statusCode} ${label} ${fmtMs(dur)} attempt ${attempt}/${retries} :: ${text.slice(0, 200)}`
+      );
 
       if (!retryable || attempt >= retries) {
         throw new Error(`HTTP ${res.statusCode} for ${url}\n${text.slice(0, 800)}`);
@@ -171,6 +182,7 @@ async function fetchText(url, { label = "GET", retries = 3 } = {}) {
     }
   }
 }
+
 async function fetchJson(url, opts = {}) {
   const text = await fetchText(url, opts);
   try {
@@ -180,29 +192,23 @@ async function fetchJson(url, opts = {}) {
   }
 }
 
-// ---------- Typesense helpers ----------
-function typesenseBase() {
-  const host = mustEnv("TYPESENSE_HOST");
-  const port = mustEnv("TYPESENSE_PORT");
-  const protocol = mustEnv("TYPESENSE_PROTOCOL");
-  return `${protocol}://${host}:${port}`;
-}
-function typesenseHeaders() {
-  return { "X-TYPESENSE-API-KEY": mustEnv("TYPESENSE_API_KEY") };
-}
-
-// NDJSON import upsert
+// ---------- Typesense upsert (NDJSON import) ----------
 async function typesenseImportUpsert(docs, collectionName) {
   if (!docs.length) return { success: 0, failed: 0, errors: [] };
 
-  const url = `${typesenseBase()}/collections/${collectionName}/documents/import?action=upsert`;
+  const host = mustEnv("TYPESENSE_HOST");
+  const port = mustEnv("TYPESENSE_PORT");
+  const protocol = mustEnv("TYPESENSE_PROTOCOL");
+  const apiKey = mustEnv("TYPESENSE_API_KEY");
+
+  const url = `${protocol}://${host}:${port}/collections/${collectionName}/documents/import?action=upsert`;
   const ndjson = docs.map((d) => JSON.stringify(d)).join("\n");
 
   const start = Date.now();
   const res = await request(url, {
     method: "POST",
     headers: {
-      ...typesenseHeaders(),
+      "X-TYPESENSE-API-KEY": apiKey,
       "Content-Type": "text/plain"
     },
     body: ndjson
@@ -239,33 +245,79 @@ async function typesenseImportUpsert(docs, collectionName) {
   return { success, failed, errors };
 }
 
-// Export IDs + update fields to rebuild state
-async function typesenseExportState(collectionName) {
-  const url = `${typesenseBase()}/collections/${collectionName}/documents/export?include_fields=id,update_date_raw,update_date`;
+// ---------- Typesense export -> rebuild tracking ----------
+async function typesenseExportAll(collectionName) {
+  const host = mustEnv("TYPESENSE_HOST");
+  const port = mustEnv("TYPESENSE_PORT");
+  const protocol = mustEnv("TYPESENSE_PROTOCOL");
+  const apiKey = mustEnv("TYPESENSE_API_KEY");
+
+  // Export endpoint streams JSONL (one JSON object per line)
+  const url = `${protocol}://${host}:${port}/collections/${collectionName}/documents/export`;
+
   const start = Date.now();
   const res = await request(url, {
     method: "GET",
-    headers: { ...typesenseHeaders() }
+    headers: { "X-TYPESENSE-API-KEY": apiKey }
   });
 
-  const text = await res.body.text();
-  const dur = Date.now() - start;
-
   if (res.statusCode < 200 || res.statusCode >= 300) {
-    throw new Error(`Typesense export failed HTTP ${res.statusCode} ${fmtMs(dur)}\n${text.slice(0, 1500)}`);
+    const text = await res.body.text();
+    throw new Error(`Typesense export failed HTTP ${res.statusCode}\n${text.slice(0, 1200)}`);
   }
 
+  const text = await res.body.text();
   const lines = text.split("\n").filter(Boolean);
-  const out = [];
+
+  log(`Typesense export ${fmtMs(Date.now() - start)} => ${lines.length} docs [${collectionName}]`);
+
+  const docs = [];
   for (const line of lines) {
     try {
-      out.push(JSON.parse(line));
+      docs.push(JSON.parse(line));
     } catch {
       // ignore bad line
     }
   }
-  log(`Typesense export ${fmtMs(dur)} => ${out.length} docs [${collectionName}]`);
-  return out;
+  return docs;
+}
+
+function rebuildStateFromTypesenseDocs(state, docs, { summaryModel, embedModel } = {}) {
+  const nowIso = ts();
+  const bills = {};
+
+  for (const d of docs) {
+    const id = d?.id;
+    if (!id) continue;
+
+    // We prefer update_date_raw if present, else try to infer from update_date epoch
+    const raw = d?.update_date_raw || null;
+    const epoch =
+      Number.isFinite(d?.update_date) && d.update_date > 0
+        ? d.update_date
+        : (raw ? toEpochSeconds(raw) : 0);
+
+    if (!epoch && !raw) continue;
+
+    bills[id] = {
+      update_date_raw: raw || null,
+      update_date_epoch: epoch || 0,
+
+      // Backfill model metadata so the state file is consistent
+      ai_summary_model: summaryModel || undefined,
+      embed_model: embedModel || undefined,
+
+      // Also useful: track when we last indexed (rebuilt from Typesense counts as “known indexed”)
+      indexed_at_utc: nowIso
+    };
+  }
+
+  state.bills = bills;
+  state.meta = state.meta || {};
+  state.meta.last_fix_tracking_utc = nowIso;
+  state.meta.last_fix_tracking_source_count = docs.length;
+
+  return state;
 }
 
 // ---------- OpenAI helpers with retry ----------
@@ -288,8 +340,7 @@ async function openaiWithRetry(fn, { label, retries = 4 } = {}) {
 
       if (!retryable || attempt >= retries) throw e;
 
-      const waitMs = Math.min(1500 * attempt, 20000);
-      await sleep(waitMs);
+      await sleep(Math.min(1500 * attempt, 20000));
     }
   }
 }
@@ -385,11 +436,7 @@ async function getBestOfficialSummaryText(detailJson) {
 // ---------- bill text fetching + chunking ----------
 function chooseBestTextLink(textIndexJson) {
   const versions =
-    textIndexJson?.textVersions ||
-    textIndexJson?.billText ||
-    textIndexJson?.versions ||
-    textIndexJson?.results ||
-    [];
+    textIndexJson?.textVersions || textIndexJson?.billText || textIndexJson?.versions || textIndexJson?.results || [];
   const arr = Array.isArray(versions) ? versions : [];
   if (!arr.length) return null;
 
@@ -476,38 +523,6 @@ function chunkText(text, { maxChars = 5500, overlapChars = 600 } = {}) {
   return chunks;
 }
 
-// ---------- index mode ----------
-const INDEX_MODE_VALUES = new Set([
-  "upsert_new_updated",
-  "upsert_new_updated_fix_tracking",
-  "reindex_all"
-]);
-
-function getIndexMode() {
-  const raw = (process.env.INDEX_MODE || "upsert_new_updated").trim();
-  if (!INDEX_MODE_VALUES.has(raw)) return "upsert_new_updated";
-  return raw;
-}
-
-function shouldProcessBill({ mode, prev, apiUpdateRaw, apiUpdateEpoch }) {
-  if (mode === "reindex_all") return true;
-
-  if (!prev) return true;
-
-  // Back-compat with older state that stored update_date as raw string
-  const prevRaw = prev.update_date_raw ?? prev.update_date ?? null;
-  const prevEpoch = prev.update_date_epoch ?? null;
-
-  // If we have raw strings on both sides, prefer that
-  if (prevRaw && apiUpdateRaw && String(prevRaw) === String(apiUpdateRaw)) return false;
-
-  // Else compare epoch seconds if available
-  if (Number.isFinite(prevEpoch) && Number.isFinite(apiUpdateEpoch) && prevEpoch === apiUpdateEpoch) return false;
-
-  // Otherwise, treat as changed
-  return true;
-}
-
 // ---------- main ----------
 async function main() {
   // Required env
@@ -527,7 +542,8 @@ async function main() {
   const summaryModel = process.env.OPENAI_SUMMARY_MODEL || "gpt-4o-mini";
   const embedModel = process.env.OPENAI_EMBED_MODEL || "text-embedding-3-large";
 
-  const indexMode = getIndexMode();
+  const indexMode = envStr("INDEX_MODE", "upsert_new_updated").trim();
+  const reindexAll = indexMode === "reindex_all";
 
   const limitPerRunRaw = envInt("LIMIT_PER_RUN", 25);
   const limitPerRun = limitPerRunRaw === 0 ? Number.MAX_SAFE_INTEGER : limitPerRunRaw;
@@ -545,61 +561,30 @@ async function main() {
   const chunksCollection = mustEnv("TYPESENSE_CHUNKS_COLLECTION");
 
   const state = loadState();
+  const prevMaxUpdate = state?.meta?.max_update_date_seen || null;
 
   log("=== Crawl start ===");
   log("Index mode:", indexMode);
   log("Congresses:", congresses.join(", "));
   log("LIMIT_PER_RUN:", limitPerRunRaw === 0 ? "all" : limitPerRunRaw);
-  log("Prev max_update_date_seen:", state?.meta?.max_update_date_seen || null);
+  log("Prev max_update_date_seen:", prevMaxUpdate);
   log("OpenAI summary model:", summaryModel);
   log("OpenAI embed model:", embedModel);
   log("Typesense batch size:", tsBatchSize);
   log("Chunk batch size:", chunkBatchSize);
   log("Congress page size:", pageSize);
 
-  // ---- Mode #2: Fix tracking from Typesense before crawling
+  // Fix-tracking option: export from Typesense and rebuild state before proceeding
   if (indexMode === "upsert_new_updated_fix_tracking") {
     log("Fix-tracking: exporting from Typesense to rebuild state...");
-    const exported = await typesenseExportState(primaryCollection);
-
-    // Rebuild bills state
-    state.bills = state.bills || {};
-    for (const doc of exported) {
-      const id = doc?.id;
-      if (!id) continue;
-
-      const updateRaw = doc?.update_date_raw || null;
-      const updateEpoch = Number.isFinite(doc?.update_date) ? doc.update_date : null;
-
-      state.bills[id] = {
-        update_date_raw: updateRaw,
-        update_date_epoch: updateEpoch,
-        ai_summary_model: state.bills?.[id]?.ai_summary_model,
-        embed_model: state.bills?.[id]?.embed_model
-      };
-    }
-
-    // A reasonable max_update_date_seen for logging: pick latest raw we can parse
-    let best = null;
-    for (const doc of exported) {
-      const raw = doc?.update_date_raw;
-      if (!raw) continue;
-      if (!best) best = raw;
-      else {
-        const a = new Date(best).getTime();
-        const b = new Date(raw).getTime();
-        if (Number.isFinite(a) && Number.isFinite(b) && b > a) best = raw;
-      }
-    }
-    if (best) state.meta.max_update_date_seen = best;
-
-    state.meta.last_run_utc = new Date().toISOString();
+    const docs = await typesenseExportAll(primaryCollection);
+    rebuildStateFromTypesenseDocs(state, docs, { summaryModel, embedModel });
     saveState(state);
     log("Fix-tracking: state rebuilt + written to disk.");
   }
 
   let processed = 0;
-  let newestUpdateSeenThisRun = null; // track max (not just first)
+  let newestUpdateSeenThisRun = null;
 
   let typesenseOk = 0;
   let typesenseFail = 0;
@@ -631,27 +616,12 @@ async function main() {
 
         const billId = normalizeBillId(item.congress, item.type, item.number);
         const apiUpdateRaw = pickUpdateDate(item);
-        const apiUpdateEpoch = toEpochSeconds(apiUpdateRaw);
-
-        // Track newest seen this run (max)
-        if (apiUpdateRaw) {
-          if (!newestUpdateSeenThisRun) newestUpdateSeenThisRun = apiUpdateRaw;
-          else {
-            const a = new Date(newestUpdateSeenThisRun).getTime();
-            const b = new Date(apiUpdateRaw).getTime();
-            if (Number.isFinite(a) && Number.isFinite(b) && b > a) newestUpdateSeenThisRun = apiUpdateRaw;
-          }
-        }
+        if (!newestUpdateSeenThisRun && apiUpdateRaw) newestUpdateSeenThisRun = apiUpdateRaw;
 
         const prev = state.bills[billId];
+        const prevUpdateRaw = prev?.update_date_raw || prev?.update_date || null;
 
-        const shouldProcess = shouldProcessBill({
-          mode: indexMode === "reindex_all" ? "reindex_all" : "upsert_new_updated",
-          prev,
-          apiUpdateRaw,
-          apiUpdateEpoch
-        });
-
+        const shouldProcess = reindexAll ? true : (!prev || prevUpdateRaw !== apiUpdateRaw);
         if (!shouldProcess) continue;
 
         const idxLabel = `${processed + 1}/${limitPerRunRaw === 0 ? "all" : limitPerRunRaw}`;
@@ -667,11 +637,15 @@ async function main() {
         const short_title = detailJson?.bill?.shortTitle || detailJson?.bill?.short_title || undefined;
         const chamber = item.originChamber || detailJson?.bill?.originChamber || undefined;
 
-        const latest_action_text = item?.latestAction?.text || detailJson?.bill?.latestAction?.text || undefined;
+        const latest_action_text =
+          item?.latestAction?.text ||
+          detailJson?.bill?.latestAction?.text ||
+          undefined;
+
         const latest_action_date = extractLatestActionDate(detailJson, item);
 
         const update_date_raw = apiUpdateRaw;
-        const update_date = apiUpdateEpoch;
+        const update_date = toEpochSeconds(apiUpdateRaw);
         const introduced_date = extractIntroducedDate(detailJson);
         const policy_area = extractPolicyArea(detailJson);
         const subjects = extractSubjects(detailJson);
@@ -680,7 +654,7 @@ async function main() {
 
         const { committees, committee_codes } = await fetchCommitteesIfNeeded(detailJson);
 
-        // Official summary
+        // Official summary (disk field)
         let official_summary = "";
         try {
           official_summary = await getBestOfficialSummaryText(detailJson);
@@ -699,9 +673,7 @@ async function main() {
           committees?.length ? `COMMITTEES: ${committees.slice(0, 10).join("; ")}` : "",
           latest_action_text ? `LATEST ACTION: ${latest_action_text}` : "",
           official_summary ? `OFFICIAL SUMMARY: ${truncate(official_summary, 2500)}` : ""
-        ]
-          .filter(Boolean)
-          .join("\n");
+        ].filter(Boolean).join("\n");
 
         // AI summary
         const summaryResp = await openaiWithRetry(
@@ -736,9 +708,7 @@ async function main() {
           ai_summary_text,
           policy_area ? `Policy area: ${policy_area}` : "",
           latest_action_text ? `Latest action: ${latest_action_text}` : ""
-        ]
-          .filter(Boolean)
-          .join("\n");
+        ].filter(Boolean).join("\n");
 
         const embResp = await openaiWithRetry(
           () =>
@@ -755,6 +725,9 @@ async function main() {
         if (embedding.length !== 3072) throw new Error(`Embedding dim mismatch for ${billId}: got ${embedding.length}, expected 3072`);
         log(`Bill embedding ok (dim=${embedding.length})`);
 
+        const indexedAt = ts();
+
+        // Build bill doc
         const billDoc = {
           id: billId,
           congress: item.congress,
@@ -786,7 +759,7 @@ async function main() {
 
           embedding,
 
-          // disk-only extras
+          // Disk-only extras for UI/debug
           api_url: (item.url || detailUrl) || undefined,
           official_summary: official_summary || undefined,
           update_date_raw: update_date_raw || undefined,
@@ -852,12 +825,13 @@ async function main() {
           warn(`Bill text/chunking failed for ${billId}: ${String(e.message || e)}`);
         }
 
-        // Update state for this bill
+        // Update state (canonical fields)
         state.bills[billId] = {
-          update_date_raw: apiUpdateRaw,
-          update_date_epoch: apiUpdateEpoch,
+          update_date_raw: apiUpdateRaw || null,
+          update_date_epoch: update_date || 0,
           ai_summary_model: summaryModel,
-          embed_model: embedModel
+          embed_model: embedModel,
+          indexed_at_utc: indexedAt
         };
 
         processed++;
@@ -892,6 +866,7 @@ async function main() {
   }
 
   // meta
+  state.meta = state.meta || {};
   state.meta.last_run_utc = new Date().toISOString();
   if (newestUpdateSeenThisRun) state.meta.max_update_date_seen = newestUpdateSeenThisRun;
 
