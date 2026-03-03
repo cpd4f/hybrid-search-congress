@@ -4,8 +4,12 @@
  *
  * Notes:
  * - LIMIT_PER_RUN=0 means "all"
- * - REINDEX_ALL=true forces processing even if update_date unchanged
- * - Congress API sometimes returns URLs without api_key; we sign them.
+ * - INDEX_MODE:
+ *   - upsert_new_updated (default)
+ *   - upsert_new_updated_fix_tracking (rebuild state from Typesense first)
+ *   - reindex_all
+ *
+ * - Congress API list sorting MUST be: sort=updateDate+desc (newest first)
  */
 
 import fs from "fs";
@@ -42,11 +46,6 @@ function mustEnv(name) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env var: ${name}`);
   return v;
-}
-function envBool(name, defaultVal = false) {
-  const v = process.env[name];
-  if (v === undefined || v === null || v === "") return defaultVal;
-  return String(v).trim().toLowerCase() === "true";
 }
 function envInt(name, defaultVal) {
   const v = process.env[name];
@@ -113,7 +112,14 @@ function safeLower(s) {
 function buildCongressListUrl(congress, limit, offset) {
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
   const key = mustEnv("CONGRESS_API_KEY");
-  return `${base}/${congress}?format=json&sort=updateDate&limit=${limit}&offset=${offset}&api_key=${encodeURIComponent(key)}`;
+
+  // IMPORTANT: newest first
+  // Congress.gov API expects: sort=updateDate+desc or updateDate+asc
+  const sort = "updateDate+desc";
+
+  return `${base}/${congress}?format=json&sort=${encodeURIComponent(sort)}&limit=${limit}&offset=${offset}&api_key=${encodeURIComponent(
+    key
+  )}`;
 }
 function buildBillDetailUrl(congress, billType, billNumber) {
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
@@ -121,8 +127,6 @@ function buildBillDetailUrl(congress, billType, billNumber) {
   return `${base}/${congress}/${safeLower(billType)}/${billNumber}?format=json&api_key=${encodeURIComponent(key)}`;
 }
 function buildBillTextIndexUrl(congress, billType, billNumber) {
-  // Documented endpoint pattern used across Congress.gov v3:
-  // /bill/{congress}/{type}/{number}/text
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
   const key = mustEnv("CONGRESS_API_KEY");
   return `${base}/${congress}/${safeLower(billType)}/${billNumber}/text?format=json&api_key=${encodeURIComponent(key)}`;
@@ -167,7 +171,6 @@ async function fetchText(url, { label = "GET", retries = 3 } = {}) {
     }
   }
 }
-
 async function fetchJson(url, opts = {}) {
   const text = await fetchText(url, opts);
   try {
@@ -177,23 +180,29 @@ async function fetchJson(url, opts = {}) {
   }
 }
 
-// ---------- Typesense upsert (NDJSON import) ----------
-async function typesenseImportUpsert(docs, collectionName) {
-  if (!docs.length) return { success: 0, failed: 0, errors: [] };
-
+// ---------- Typesense helpers ----------
+function typesenseBase() {
   const host = mustEnv("TYPESENSE_HOST");
   const port = mustEnv("TYPESENSE_PORT");
   const protocol = mustEnv("TYPESENSE_PROTOCOL");
-  const apiKey = mustEnv("TYPESENSE_API_KEY");
+  return `${protocol}://${host}:${port}`;
+}
+function typesenseHeaders() {
+  return { "X-TYPESENSE-API-KEY": mustEnv("TYPESENSE_API_KEY") };
+}
 
-  const url = `${protocol}://${host}:${port}/collections/${collectionName}/documents/import?action=upsert`;
+// NDJSON import upsert
+async function typesenseImportUpsert(docs, collectionName) {
+  if (!docs.length) return { success: 0, failed: 0, errors: [] };
+
+  const url = `${typesenseBase()}/collections/${collectionName}/documents/import?action=upsert`;
   const ndjson = docs.map((d) => JSON.stringify(d)).join("\n");
 
   const start = Date.now();
   const res = await request(url, {
     method: "POST",
     headers: {
-      "X-TYPESENSE-API-KEY": apiKey,
+      ...typesenseHeaders(),
       "Content-Type": "text/plain"
     },
     body: ndjson
@@ -230,6 +239,35 @@ async function typesenseImportUpsert(docs, collectionName) {
   return { success, failed, errors };
 }
 
+// Export IDs + update fields to rebuild state
+async function typesenseExportState(collectionName) {
+  const url = `${typesenseBase()}/collections/${collectionName}/documents/export?include_fields=id,update_date_raw,update_date`;
+  const start = Date.now();
+  const res = await request(url, {
+    method: "GET",
+    headers: { ...typesenseHeaders() }
+  });
+
+  const text = await res.body.text();
+  const dur = Date.now() - start;
+
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw new Error(`Typesense export failed HTTP ${res.statusCode} ${fmtMs(dur)}\n${text.slice(0, 1500)}`);
+  }
+
+  const lines = text.split("\n").filter(Boolean);
+  const out = [];
+  for (const line of lines) {
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      // ignore bad line
+    }
+  }
+  log(`Typesense export ${fmtMs(dur)} => ${out.length} docs [${collectionName}]`);
+  return out;
+}
+
 // ---------- OpenAI helpers with retry ----------
 async function openaiWithRetry(fn, { label, retries = 4 } = {}) {
   let attempt = 0;
@@ -250,7 +288,7 @@ async function openaiWithRetry(fn, { label, retries = 4 } = {}) {
 
       if (!retryable || attempt >= retries) throw e;
 
-      let waitMs = Math.min(1500 * attempt, 20000);
+      const waitMs = Math.min(1500 * attempt, 20000);
       await sleep(waitMs);
     }
   }
@@ -288,20 +326,23 @@ function extractIntroducedDate(detailJson) {
   return d ? toEpochSeconds(d) : 0;
 }
 function extractLatestActionDate(detailJson, listItem) {
-  const d = listItem?.latestAction?.actionDate || detailJson?.bill?.latestAction?.actionDate || detailJson?.latestAction?.actionDate;
+  const d =
+    listItem?.latestAction?.actionDate ||
+    detailJson?.bill?.latestAction?.actionDate ||
+    detailJson?.latestAction?.actionDate;
   return d ? toEpochSeconds(d) : undefined;
 }
 function extractCommittees(detailJson) {
-  // Congress API commonly provides committees list on detail: bill.committees (count + url)
-  // We’ll try:
-  // - direct committees array if present
-  // - else follow committees.url if present
   const committeesObj = detailJson?.bill?.committees || detailJson?.committees;
   const direct = committeesObj?.items || committeesObj?.committees || committeesObj;
   if (Array.isArray(direct)) {
     const names = direct.map((c) => c?.name).filter(Boolean).map(String);
     const codes = direct.map((c) => c?.systemCode || c?.code).filter(Boolean).map(String);
-    return { committees: names.length ? names : undefined, committee_codes: codes.length ? codes : undefined, committees_url: committeesObj?.url };
+    return {
+      committees: names.length ? names : undefined,
+      committee_codes: codes.length ? codes : undefined,
+      committees_url: committeesObj?.url
+    };
   }
   return { committees: undefined, committee_codes: undefined, committees_url: committeesObj?.url };
 }
@@ -343,13 +384,15 @@ async function getBestOfficialSummaryText(detailJson) {
 
 // ---------- bill text fetching + chunking ----------
 function chooseBestTextLink(textIndexJson) {
-  // The text endpoint often returns versions/formats with links.
-  // We'll scan for a “formatted text/html” first, then anything with a URL.
-  const versions = textIndexJson?.textVersions || textIndexJson?.billText || textIndexJson?.versions || textIndexJson?.results || [];
+  const versions =
+    textIndexJson?.textVersions ||
+    textIndexJson?.billText ||
+    textIndexJson?.versions ||
+    textIndexJson?.results ||
+    [];
   const arr = Array.isArray(versions) ? versions : [];
   if (!arr.length) return null;
 
-  // Flatten possible formats per version
   const candidates = [];
   for (const v of arr) {
     const versionLabel = v?.type || v?.versionName || v?.version || v?.date || "Text";
@@ -360,7 +403,6 @@ function chooseBestTextLink(textIndexJson) {
       const format = (f?.type || f?.format || f?.mimeType || "").toString();
       if (url) candidates.push({ url, format, versionLabel });
     }
-    // Sometimes version object itself has url
     if (v?.url) candidates.push({ url: v.url, format: v?.format || "", versionLabel });
   }
 
@@ -380,17 +422,15 @@ function chooseBestTextLink(textIndexJson) {
 }
 
 async function fetchBillTextPlain(congress, type, number) {
-  // Try: detail-provided link if present (we'll rely on /text endpoint as the canonical index)
   const textIndexUrl = buildBillTextIndexUrl(congress, type, number);
   const idx = await fetchJson(textIndexUrl, { label: "TEXT_INDEX", retries: 2 });
 
   const chosen = chooseBestTextLink(idx);
   if (!chosen) return { text: "", source_url: undefined, version_label: undefined };
 
-  const source_url = withCongressApiKey(chosen.url);
-  const raw = await fetchText(source_url, { label: "TEXT", retries: 2 });
+  const source_url_signed = withCongressApiKey(chosen.url);
+  const raw = await fetchText(source_url_signed, { label: "TEXT", retries: 2 });
 
-  // If it looks like HTML, strip it; otherwise treat as text.
   const looksHtml = /<[^>]+>/.test(raw) && /<\/(p|div|span|body|html)>/i.test(raw);
   const text = looksHtml ? stripHtml(raw) : raw.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 
@@ -401,7 +441,6 @@ function chunkText(text, { maxChars = 5500, overlapChars = 600 } = {}) {
   const clean = String(text || "").replace(/\r/g, "").trim();
   if (!clean) return [];
 
-  // Split into paragraphs-ish
   const parts = clean.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
 
   const chunks = [];
@@ -417,16 +456,14 @@ function chunkText(text, { maxChars = 5500, overlapChars = 600 } = {}) {
       current = p;
       continue;
     }
-    if ((current.length + 2 + p.length) <= maxChars) {
+    if (current.length + 2 + p.length <= maxChars) {
       current += "\n\n" + p;
     } else {
       pushChunk(current);
 
-      // overlap tail
       const tail = current.slice(Math.max(0, current.length - overlapChars));
       current = tail + "\n\n" + p;
 
-      // if still too large, hard-split
       while (current.length > maxChars * 1.3) {
         pushChunk(current.slice(0, maxChars));
         const tail2 = current.slice(Math.max(0, maxChars - overlapChars));
@@ -437,6 +474,38 @@ function chunkText(text, { maxChars = 5500, overlapChars = 600 } = {}) {
 
   pushChunk(current);
   return chunks;
+}
+
+// ---------- index mode ----------
+const INDEX_MODE_VALUES = new Set([
+  "upsert_new_updated",
+  "upsert_new_updated_fix_tracking",
+  "reindex_all"
+]);
+
+function getIndexMode() {
+  const raw = (process.env.INDEX_MODE || "upsert_new_updated").trim();
+  if (!INDEX_MODE_VALUES.has(raw)) return "upsert_new_updated";
+  return raw;
+}
+
+function shouldProcessBill({ mode, prev, apiUpdateRaw, apiUpdateEpoch }) {
+  if (mode === "reindex_all") return true;
+
+  if (!prev) return true;
+
+  // Back-compat with older state that stored update_date as raw string
+  const prevRaw = prev.update_date_raw ?? prev.update_date ?? null;
+  const prevEpoch = prev.update_date_epoch ?? null;
+
+  // If we have raw strings on both sides, prefer that
+  if (prevRaw && apiUpdateRaw && String(prevRaw) === String(apiUpdateRaw)) return false;
+
+  // Else compare epoch seconds if available
+  if (Number.isFinite(prevEpoch) && Number.isFinite(apiUpdateEpoch) && prevEpoch === apiUpdateEpoch) return false;
+
+  // Otherwise, treat as changed
+  return true;
 }
 
 // ---------- main ----------
@@ -458,7 +527,8 @@ async function main() {
   const summaryModel = process.env.OPENAI_SUMMARY_MODEL || "gpt-4o-mini";
   const embedModel = process.env.OPENAI_EMBED_MODEL || "text-embedding-3-large";
 
-  const reindexAll = envBool("REINDEX_ALL", false);
+  const indexMode = getIndexMode();
+
   const limitPerRunRaw = envInt("LIMIT_PER_RUN", 25);
   const limitPerRun = limitPerRunRaw === 0 ? Number.MAX_SAFE_INTEGER : limitPerRunRaw;
 
@@ -475,21 +545,61 @@ async function main() {
   const chunksCollection = mustEnv("TYPESENSE_CHUNKS_COLLECTION");
 
   const state = loadState();
-  const prevMaxUpdate = state?.meta?.max_update_date_seen || null;
 
   log("=== Crawl start ===");
+  log("Index mode:", indexMode);
   log("Congresses:", congresses.join(", "));
   log("LIMIT_PER_RUN:", limitPerRunRaw === 0 ? "all" : limitPerRunRaw);
-  log("REINDEX_ALL:", reindexAll);
-  log("Prev max_update_date_seen:", prevMaxUpdate);
+  log("Prev max_update_date_seen:", state?.meta?.max_update_date_seen || null);
   log("OpenAI summary model:", summaryModel);
   log("OpenAI embed model:", embedModel);
   log("Typesense batch size:", tsBatchSize);
   log("Chunk batch size:", chunkBatchSize);
   log("Congress page size:", pageSize);
 
+  // ---- Mode #2: Fix tracking from Typesense before crawling
+  if (indexMode === "upsert_new_updated_fix_tracking") {
+    log("Fix-tracking: exporting from Typesense to rebuild state...");
+    const exported = await typesenseExportState(primaryCollection);
+
+    // Rebuild bills state
+    state.bills = state.bills || {};
+    for (const doc of exported) {
+      const id = doc?.id;
+      if (!id) continue;
+
+      const updateRaw = doc?.update_date_raw || null;
+      const updateEpoch = Number.isFinite(doc?.update_date) ? doc.update_date : null;
+
+      state.bills[id] = {
+        update_date_raw: updateRaw,
+        update_date_epoch: updateEpoch,
+        ai_summary_model: state.bills?.[id]?.ai_summary_model,
+        embed_model: state.bills?.[id]?.embed_model
+      };
+    }
+
+    // A reasonable max_update_date_seen for logging: pick latest raw we can parse
+    let best = null;
+    for (const doc of exported) {
+      const raw = doc?.update_date_raw;
+      if (!raw) continue;
+      if (!best) best = raw;
+      else {
+        const a = new Date(best).getTime();
+        const b = new Date(raw).getTime();
+        if (Number.isFinite(a) && Number.isFinite(b) && b > a) best = raw;
+      }
+    }
+    if (best) state.meta.max_update_date_seen = best;
+
+    state.meta.last_run_utc = new Date().toISOString();
+    saveState(state);
+    log("Fix-tracking: state rebuilt + written to disk.");
+  }
+
   let processed = 0;
-  let newestUpdateSeenThisRun = null;
+  let newestUpdateSeenThisRun = null; // track max (not just first)
 
   let typesenseOk = 0;
   let typesenseFail = 0;
@@ -521,12 +631,27 @@ async function main() {
 
         const billId = normalizeBillId(item.congress, item.type, item.number);
         const apiUpdateRaw = pickUpdateDate(item);
-        if (!newestUpdateSeenThisRun && apiUpdateRaw) newestUpdateSeenThisRun = apiUpdateRaw;
+        const apiUpdateEpoch = toEpochSeconds(apiUpdateRaw);
+
+        // Track newest seen this run (max)
+        if (apiUpdateRaw) {
+          if (!newestUpdateSeenThisRun) newestUpdateSeenThisRun = apiUpdateRaw;
+          else {
+            const a = new Date(newestUpdateSeenThisRun).getTime();
+            const b = new Date(apiUpdateRaw).getTime();
+            if (Number.isFinite(a) && Number.isFinite(b) && b > a) newestUpdateSeenThisRun = apiUpdateRaw;
+          }
+        }
 
         const prev = state.bills[billId];
-        const prevUpdate = prev?.update_date || null;
 
-        const shouldProcess = reindexAll ? true : (!prev || prevUpdate !== apiUpdateRaw);
+        const shouldProcess = shouldProcessBill({
+          mode: indexMode === "reindex_all" ? "reindex_all" : "upsert_new_updated",
+          prev,
+          apiUpdateRaw,
+          apiUpdateEpoch
+        });
+
         if (!shouldProcess) continue;
 
         const idxLabel = `${processed + 1}/${limitPerRunRaw === 0 ? "all" : limitPerRunRaw}`;
@@ -542,15 +667,11 @@ async function main() {
         const short_title = detailJson?.bill?.shortTitle || detailJson?.bill?.short_title || undefined;
         const chamber = item.originChamber || detailJson?.bill?.originChamber || undefined;
 
-        const latest_action_text =
-          item?.latestAction?.text ||
-          detailJson?.bill?.latestAction?.text ||
-          undefined;
-
+        const latest_action_text = item?.latestAction?.text || detailJson?.bill?.latestAction?.text || undefined;
         const latest_action_date = extractLatestActionDate(detailJson, item);
 
         const update_date_raw = apiUpdateRaw;
-        const update_date = toEpochSeconds(apiUpdateRaw);
+        const update_date = apiUpdateEpoch;
         const introduced_date = extractIntroducedDate(detailJson);
         const policy_area = extractPolicyArea(detailJson);
         const subjects = extractSubjects(detailJson);
@@ -559,7 +680,7 @@ async function main() {
 
         const { committees, committee_codes } = await fetchCommitteesIfNeeded(detailJson);
 
-        // Official summary (disk field — also indexed if you have it in schema; if not, it’s just stored)
+        // Official summary
         let official_summary = "";
         try {
           official_summary = await getBestOfficialSummaryText(detailJson);
@@ -568,7 +689,7 @@ async function main() {
           warn(`Official summary fetch failed for ${billId}: ${String(e.message || e)}`);
         }
 
-        // AI summary input (small + high-signal)
+        // AI summary input
         const aiInput = [
           `TITLE: ${title}`,
           short_title ? `SHORT TITLE: ${short_title}` : "",
@@ -578,7 +699,9 @@ async function main() {
           committees?.length ? `COMMITTEES: ${committees.slice(0, 10).join("; ")}` : "",
           latest_action_text ? `LATEST ACTION: ${latest_action_text}` : "",
           official_summary ? `OFFICIAL SUMMARY: ${truncate(official_summary, 2500)}` : ""
-        ].filter(Boolean).join("\n");
+        ]
+          .filter(Boolean)
+          .join("\n");
 
         // AI summary
         const summaryResp = await openaiWithRetry(
@@ -606,14 +729,16 @@ async function main() {
         const ai_summary_text = (summaryResp.output_text || "").trim() || title;
         log(`AI summary length: ${ai_summary_text.length} chars`);
 
-        // Bill-level embedding (for bill discovery)
+        // Bill-level embedding
         const embedText = [
           title,
           short_title || "",
           ai_summary_text,
           policy_area ? `Policy area: ${policy_area}` : "",
           latest_action_text ? `Latest action: ${latest_action_text}` : ""
-        ].filter(Boolean).join("\n");
+        ]
+          .filter(Boolean)
+          .join("\n");
 
         const embResp = await openaiWithRetry(
           () =>
@@ -630,7 +755,6 @@ async function main() {
         if (embedding.length !== 3072) throw new Error(`Embedding dim mismatch for ${billId}: got ${embedding.length}, expected 3072`);
         log(`Bill embedding ok (dim=${embedding.length})`);
 
-        // Build bill doc (matches your schema + extra disk fields OK)
         const billDoc = {
           id: billId,
           congress: item.congress,
@@ -654,15 +778,15 @@ async function main() {
 
           latest_action_text,
 
-          status: undefined,           // (you can add inference later if you already have it in schema)
-          committee_stage: undefined,  // (same)
+          status: undefined,
+          committee_stage: undefined,
 
           committees,
           committee_codes,
 
           embedding,
 
-          // Disk-only extras for UI/debug
+          // disk-only extras
           api_url: (item.url || detailUrl) || undefined,
           official_summary: official_summary || undefined,
           update_date_raw: update_date_raw || undefined,
@@ -681,7 +805,6 @@ async function main() {
             const chunks = chunkText(fullText, { maxChars: 5500, overlapChars: 600 });
             log(`Chunked into ${chunks.length} chunks`);
 
-            // Embed + enqueue chunk docs
             for (let ci = 0; ci < chunks.length; ci++) {
               const chunkTextStr = chunks[ci];
 
@@ -729,9 +852,10 @@ async function main() {
           warn(`Bill text/chunking failed for ${billId}: ${String(e.message || e)}`);
         }
 
-        // Update state
+        // Update state for this bill
         state.bills[billId] = {
-          update_date: apiUpdateRaw,
+          update_date_raw: apiUpdateRaw,
+          update_date_epoch: apiUpdateEpoch,
           ai_summary_model: summaryModel,
           embed_model: embedModel
         };
