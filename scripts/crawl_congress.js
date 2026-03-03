@@ -1,32 +1,11 @@
 /**
- * Congress -> OpenAI (AI summary + embedding) -> Typesense upsert
- * With real-time, high-signal logs for GitHub Actions.
+ * Congress -> OpenAI (AI summary + embeddings) -> Typesense upsert
+ * Also: Fetch full bill text -> chunk -> embed -> Typesense upsert to bill_chunks
  *
- * Fix included:
- * - Congress "summaries.url" is returned without api_key, causing 403 API_KEY_MISSING.
- *   We now "sign" any Congress.gov API URL by appending api_key if missing.
- *
- * Key features:
- * - REINDEX_ALL=true to ignore state and reprocess everything (within LIMIT_PER_RUN)
- * - Timestamped logs + per-bill progress
- * - Logs OpenAI + Typesense call durations
- * - Prints Typesense per-doc errors when failures occur
- * - Basic retry/backoff for transient HTTP + OpenAI rate limits
- *
- * Required env:
- * - CONGRESS_API_KEY
- * - CONGRESS_API_BASE (e.g. https://api.congress.gov/v3/bill)
- * - TYPESENSE_API_KEY, TYPESENSE_HOST, TYPESENSE_PORT, TYPESENSE_PROTOCOL, TYPESENSE_COLLECTION
- * - OPENAI_API_KEY
- *
- * Optional env:
- * - OPENAI_SUMMARY_MODEL (default: gpt-4o-mini)
- * - OPENAI_EMBED_MODEL (default: text-embedding-3-large)
- * - CONGRESSES="119" (comma-separated)
- * - LIMIT_PER_RUN="25"
- * - REINDEX_ALL="false"
- * - TYPESENSE_BATCH_SIZE="10" (default: 10)
- * - CONGRESS_PAGE_SIZE="100" (default: 100)
+ * Notes:
+ * - LIMIT_PER_RUN=0 means "all"
+ * - REINDEX_ALL=true forces processing even if update_date unchanged
+ * - Congress API sometimes returns URLs without api_key; we sign them.
  */
 
 import fs from "fs";
@@ -54,7 +33,7 @@ function fmtMs(ms) {
   const s = ms / 1000;
   if (s < 60) return `${s.toFixed(1)}s`;
   const m = Math.floor(s / 60);
-  const r = (s - m * 60).toFixed(0);
+  const r = Math.round(s - m * 60);
   return `${m}m ${r}s`;
 }
 
@@ -114,6 +93,8 @@ function stripHtml(html) {
     .replace(/<\/p>/gi, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -123,6 +104,9 @@ function truncate(s, n) {
 }
 function pickUpdateDate(item) {
   return item.updateDateIncludingText || item.updateDate || null;
+}
+function safeLower(s) {
+  return String(s || "").toLowerCase();
 }
 
 // ---------- URL helpers/builders ----------
@@ -134,17 +118,20 @@ function buildCongressListUrl(congress, limit, offset) {
 function buildBillDetailUrl(congress, billType, billNumber) {
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
   const key = mustEnv("CONGRESS_API_KEY");
-  return `${base}/${congress}/${String(billType).toLowerCase()}/${billNumber}?format=json&api_key=${encodeURIComponent(key)}`;
+  return `${base}/${congress}/${safeLower(billType)}/${billNumber}?format=json&api_key=${encodeURIComponent(key)}`;
 }
-
-/**
- * Congress API sometimes returns URL fields (e.g., summaries.url) WITHOUT api_key.
- * This function appends api_key if missing.
- */
+function buildBillTextIndexUrl(congress, billType, billNumber) {
+  // Documented endpoint pattern used across Congress.gov v3:
+  // /bill/{congress}/{type}/{number}/text
+  const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
+  const key = mustEnv("CONGRESS_API_KEY");
+  return `${base}/${congress}/${safeLower(billType)}/${billNumber}/text?format=json&api_key=${encodeURIComponent(key)}`;
+}
 function withCongressApiKey(url) {
   const key = mustEnv("CONGRESS_API_KEY");
   const u = new URL(url);
   if (!u.searchParams.has("api_key")) u.searchParams.set("api_key", key);
+  if (!u.searchParams.has("format")) u.searchParams.set("format", "json");
   return u.toString();
 }
 
@@ -165,21 +152,18 @@ async function fetchText(url, { label = "GET", retries = 3 } = {}) {
       }
 
       const retryable = [429, 500, 502, 503, 504].includes(res.statusCode);
-      const preview = text.slice(0, 300).replace(/\s+/g, " ");
-      warn(`HTTP ${res.statusCode} ${label} ${fmtMs(dur)} attempt ${attempt}/${retries} :: ${preview}`);
+      warn(`HTTP ${res.statusCode} ${label} ${fmtMs(dur)} attempt ${attempt}/${retries} :: ${text.slice(0, 200)}`);
 
       if (!retryable || attempt >= retries) {
         throw new Error(`HTTP ${res.statusCode} for ${url}\n${text.slice(0, 800)}`);
       }
 
-      const backoff = Math.min(2000 * attempt, 10000);
-      await sleep(backoff);
+      await sleep(Math.min(2000 * attempt, 10000));
     } catch (e) {
       const dur = Date.now() - start;
       warn(`Fetch error ${label} ${fmtMs(dur)} attempt ${attempt}/${retries}: ${String(e.message || e)}`);
       if (attempt >= retries) throw e;
-      const backoff = Math.min(2000 * attempt, 10000);
-      await sleep(backoff);
+      await sleep(Math.min(2000 * attempt, 10000));
     }
   }
 }
@@ -193,109 +177,16 @@ async function fetchJson(url, opts = {}) {
   }
 }
 
-// ---------- detail extractors ----------
-async function getBestOfficialSummaryText(detailJson) {
-  const summariesObj = detailJson?.bill?.summaries || detailJson?.summaries;
-  const summariesUrl = summariesObj?.url;
-  if (!summariesUrl) return "";
-
-  // ✅ FIX: append api_key if missing
-  const signed = withCongressApiKey(summariesUrl);
-
-  const data = await fetchJson(signed, { label: "SUMMARIES", retries: 2 });
-  const arr = data?.summaries || data?.results || data;
-  if (!Array.isArray(arr) || !arr.length) return "";
-
-  const textHtml = arr[0]?.text || "";
-  return stripHtml(textHtml);
-}
-
-function extractSponsor(detailJson) {
-  const sponsors = detailJson?.bill?.sponsors || detailJson?.sponsors || [];
-  const first = Array.isArray(sponsors) && sponsors.length ? sponsors[0] : null;
-  if (!first) return {};
-  return {
-    sponsor_party: first.party || undefined,
-    sponsor_state: first.state || undefined
-  };
-}
-
-function extractPolicyArea(detailJson) {
-  const pa = detailJson?.bill?.policyArea?.name || detailJson?.policyArea?.name;
-  return pa ? String(pa) : undefined;
-}
-
-function extractIntroducedDate(detailJson) {
-  const d = detailJson?.bill?.introducedDate || detailJson?.introducedDate;
-  return d ? toEpochSeconds(d) : 0;
-}
-
-function extractCosponsorCount(detailJson) {
-  const cs = detailJson?.bill?.cosponsors || detailJson?.cosponsors;
-  const count = cs?.count;
-  return Number.isFinite(count) ? count : undefined;
-}
-
-function buildInputForAI({ title, policy_area, chamber, latest_action_text, sponsor_party, sponsor_state, official_summary }) {
-  const parts = [
-    `TITLE: ${title || ""}`,
-    policy_area ? `POLICY AREA: ${policy_area}` : "",
-    chamber ? `ORIGIN CHAMBER: ${chamber}` : "",
-    sponsor_party || sponsor_state ? `SPONSOR: [${sponsor_party || "?"}-${sponsor_state || "?"}]` : "",
-    latest_action_text ? `LATEST ACTION: ${latest_action_text}` : "",
-    official_summary ? `OFFICIAL SUMMARY: ${truncate(official_summary, 2500)}` : ""
-  ].filter(Boolean);
-
-  return parts.join("\n");
-}
-
-// ---------- OpenAI helpers with retry ----------
-async function openaiWithRetry(fn, { label, retries = 4 } = {}) {
-  let attempt = 0;
-  while (true) {
-    attempt++;
-    const start = Date.now();
-    try {
-      const result = await fn();
-      const dur = Date.now() - start;
-      log(`OpenAI ${label} ok ${fmtMs(dur)} (attempt ${attempt}/${retries})`);
-      return result;
-    } catch (e) {
-      const dur = Date.now() - start;
-      const msg = String(e?.message || e);
-      const status = e?.status || e?.response?.status;
-      const retryable = status === 429 || (status >= 500 && status < 600) || /rate limit/i.test(msg);
-      warn(`OpenAI ${label} fail ${fmtMs(dur)} (attempt ${attempt}/${retries}) :: ${msg}`);
-
-      if (!retryable || attempt >= retries) throw e;
-
-      const retryAfterHeader =
-        e?.response?.headers?.get?.("retry-after") ||
-        e?.response?.headers?.["retry-after"] ||
-        null;
-
-      let waitMs = 1500 * attempt;
-      if (retryAfterHeader) {
-        const sec = parseFloat(retryAfterHeader);
-        if (Number.isFinite(sec)) waitMs = Math.max(waitMs, sec * 1000);
-      }
-      waitMs = Math.min(waitMs, 20000);
-      await sleep(waitMs);
-    }
-  }
-}
-
-// ---------- Typesense upsert ----------
-async function typesenseImportUpsert(docs) {
+// ---------- Typesense upsert (NDJSON import) ----------
+async function typesenseImportUpsert(docs, collectionName) {
   if (!docs.length) return { success: 0, failed: 0, errors: [] };
 
   const host = mustEnv("TYPESENSE_HOST");
   const port = mustEnv("TYPESENSE_PORT");
   const protocol = mustEnv("TYPESENSE_PROTOCOL");
   const apiKey = mustEnv("TYPESENSE_API_KEY");
-  const collection = mustEnv("TYPESENSE_COLLECTION");
 
-  const url = `${protocol}://${host}:${port}/collections/${collection}/documents/import?action=upsert`;
+  const url = `${protocol}://${host}:${port}/collections/${collectionName}/documents/import?action=upsert`;
   const ndjson = docs.map((d) => JSON.stringify(d)).join("\n");
 
   const start = Date.now();
@@ -334,56 +225,281 @@ async function typesenseImportUpsert(docs) {
     }
   }
 
-  log(`Typesense import ${fmtMs(dur)} => ${success} ok, ${failed} failed (batch ${docs.length})`);
-  if (failed) warn("Typesense sample errors:", errors.slice(0, 5));
+  log(`Typesense import ${fmtMs(dur)} => ${success} ok, ${failed} failed (batch ${docs.length}) [${collectionName}]`);
+  if (failed) warn(`Typesense sample errors [${collectionName}]:`, errors.slice(0, 5));
   return { success, failed, errors };
+}
+
+// ---------- OpenAI helpers with retry ----------
+async function openaiWithRetry(fn, { label, retries = 4 } = {}) {
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    const start = Date.now();
+    try {
+      const result = await fn();
+      const dur = Date.now() - start;
+      log(`OpenAI ${label} ok ${fmtMs(dur)} (attempt ${attempt}/${retries})`);
+      return result;
+    } catch (e) {
+      const dur = Date.now() - start;
+      const msg = String(e?.message || e);
+      const status = e?.status || e?.response?.status;
+      const retryable = status === 429 || (status >= 500 && status < 600) || /rate limit/i.test(msg);
+      warn(`OpenAI ${label} fail ${fmtMs(dur)} (attempt ${attempt}/${retries}) :: ${msg}`);
+
+      if (!retryable || attempt >= retries) throw e;
+
+      let waitMs = Math.min(1500 * attempt, 20000);
+      await sleep(waitMs);
+    }
+  }
+}
+
+// ---------- extraction ----------
+function extractSponsor(detailJson) {
+  const sponsors = detailJson?.bill?.sponsors || detailJson?.sponsors || [];
+  const first = Array.isArray(sponsors) && sponsors.length ? sponsors[0] : null;
+  if (!first) return {};
+  return {
+    sponsor_party: first.party || undefined,
+    sponsor_state: first.state || undefined
+  };
+}
+function extractPolicyArea(detailJson) {
+  const pa = detailJson?.bill?.policyArea?.name || detailJson?.policyArea?.name;
+  return pa ? String(pa) : undefined;
+}
+function extractSubjects(detailJson) {
+  const subj = detailJson?.bill?.subjects?.billSubjects || detailJson?.bill?.subjects || detailJson?.subjects;
+  if (!subj) return undefined;
+  const arr = Array.isArray(subj) ? subj : (subj?.items || subj?.subjects || []);
+  if (!Array.isArray(arr)) return undefined;
+  const names = arr.map((x) => x?.name).filter(Boolean).map(String);
+  return names.length ? names : undefined;
+}
+function extractCosponsorCount(detailJson) {
+  const cs = detailJson?.bill?.cosponsors || detailJson?.cosponsors;
+  const count = cs?.count;
+  return Number.isFinite(count) ? count : undefined;
+}
+function extractIntroducedDate(detailJson) {
+  const d = detailJson?.bill?.introducedDate || detailJson?.introducedDate;
+  return d ? toEpochSeconds(d) : 0;
+}
+function extractLatestActionDate(detailJson, listItem) {
+  const d = listItem?.latestAction?.actionDate || detailJson?.bill?.latestAction?.actionDate || detailJson?.latestAction?.actionDate;
+  return d ? toEpochSeconds(d) : undefined;
+}
+function extractCommittees(detailJson) {
+  // Congress API commonly provides committees list on detail: bill.committees (count + url)
+  // We’ll try:
+  // - direct committees array if present
+  // - else follow committees.url if present
+  const committeesObj = detailJson?.bill?.committees || detailJson?.committees;
+  const direct = committeesObj?.items || committeesObj?.committees || committeesObj;
+  if (Array.isArray(direct)) {
+    const names = direct.map((c) => c?.name).filter(Boolean).map(String);
+    const codes = direct.map((c) => c?.systemCode || c?.code).filter(Boolean).map(String);
+    return { committees: names.length ? names : undefined, committee_codes: codes.length ? codes : undefined, committees_url: committeesObj?.url };
+  }
+  return { committees: undefined, committee_codes: undefined, committees_url: committeesObj?.url };
+}
+async function fetchCommitteesIfNeeded(detailJson) {
+  const { committees, committee_codes, committees_url } = extractCommittees(detailJson);
+  if (committees || committee_codes) return { committees, committee_codes };
+
+  if (!committees_url) return { committees: undefined, committee_codes: undefined };
+
+  try {
+    const url = withCongressApiKey(committees_url);
+    const data = await fetchJson(url, { label: "COMMITTEES", retries: 2 });
+    const arr = data?.committees || data?.items || data?.results || [];
+    if (!Array.isArray(arr)) return { committees: undefined, committee_codes: undefined };
+
+    const names = arr.map((c) => c?.name).filter(Boolean).map(String);
+    const codes = arr.map((c) => c?.systemCode || c?.code).filter(Boolean).map(String);
+
+    return { committees: names.length ? names : undefined, committee_codes: codes.length ? codes : undefined };
+  } catch (e) {
+    warn("Committees fetch failed:", String(e.message || e));
+    return { committees: undefined, committee_codes: undefined };
+  }
+}
+
+async function getBestOfficialSummaryText(detailJson) {
+  const summariesObj = detailJson?.bill?.summaries || detailJson?.summaries;
+  const summariesUrl = summariesObj?.url;
+  if (!summariesUrl) return "";
+
+  const signed = withCongressApiKey(summariesUrl);
+  const data = await fetchJson(signed, { label: "SUMMARIES", retries: 2 });
+  const arr = data?.summaries || data?.results || [];
+  if (!Array.isArray(arr) || !arr.length) return "";
+
+  const textHtml = arr[0]?.text || "";
+  return stripHtml(textHtml);
+}
+
+// ---------- bill text fetching + chunking ----------
+function chooseBestTextLink(textIndexJson) {
+  // The text endpoint often returns versions/formats with links.
+  // We'll scan for a “formatted text/html” first, then anything with a URL.
+  const versions = textIndexJson?.textVersions || textIndexJson?.billText || textIndexJson?.versions || textIndexJson?.results || [];
+  const arr = Array.isArray(versions) ? versions : [];
+  if (!arr.length) return null;
+
+  // Flatten possible formats per version
+  const candidates = [];
+  for (const v of arr) {
+    const versionLabel = v?.type || v?.versionName || v?.version || v?.date || "Text";
+    const formats = v?.formats || v?.text || v?.items || [];
+    const fArr = Array.isArray(formats) ? formats : [];
+    for (const f of fArr) {
+      const url = f?.url || f?.link || f?.documentUrl;
+      const format = (f?.type || f?.format || f?.mimeType || "").toString();
+      if (url) candidates.push({ url, format, versionLabel });
+    }
+    // Sometimes version object itself has url
+    if (v?.url) candidates.push({ url: v.url, format: v?.format || "", versionLabel });
+  }
+
+  if (!candidates.length) return null;
+
+  const score = (c) => {
+    const s = `${c.format}`.toLowerCase();
+    if (s.includes("html")) return 1;
+    if (s.includes("formatted")) return 2;
+    if (s.includes("xml")) return 3;
+    if (s.includes("pdf")) return 9;
+    return 5;
+  };
+
+  candidates.sort((a, b) => score(a) - score(b));
+  return candidates[0];
+}
+
+async function fetchBillTextPlain(congress, type, number) {
+  // Try: detail-provided link if present (we'll rely on /text endpoint as the canonical index)
+  const textIndexUrl = buildBillTextIndexUrl(congress, type, number);
+  const idx = await fetchJson(textIndexUrl, { label: "TEXT_INDEX", retries: 2 });
+
+  const chosen = chooseBestTextLink(idx);
+  if (!chosen) return { text: "", source_url: undefined, version_label: undefined };
+
+  const source_url = withCongressApiKey(chosen.url);
+  const raw = await fetchText(source_url, { label: "TEXT", retries: 2 });
+
+  // If it looks like HTML, strip it; otherwise treat as text.
+  const looksHtml = /<[^>]+>/.test(raw) && /<\/(p|div|span|body|html)>/i.test(raw);
+  const text = looksHtml ? stripHtml(raw) : raw.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+
+  return { text: text || "", source_url: chosen.url, version_label: chosen.versionLabel || undefined };
+}
+
+function chunkText(text, { maxChars = 5500, overlapChars = 600 } = {}) {
+  const clean = String(text || "").replace(/\r/g, "").trim();
+  if (!clean) return [];
+
+  // Split into paragraphs-ish
+  const parts = clean.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+
+  const chunks = [];
+  let current = "";
+
+  function pushChunk(s) {
+    const c = s.trim();
+    if (c) chunks.push(c);
+  }
+
+  for (const p of parts) {
+    if (!current) {
+      current = p;
+      continue;
+    }
+    if ((current.length + 2 + p.length) <= maxChars) {
+      current += "\n\n" + p;
+    } else {
+      pushChunk(current);
+
+      // overlap tail
+      const tail = current.slice(Math.max(0, current.length - overlapChars));
+      current = tail + "\n\n" + p;
+
+      // if still too large, hard-split
+      while (current.length > maxChars * 1.3) {
+        pushChunk(current.slice(0, maxChars));
+        const tail2 = current.slice(Math.max(0, maxChars - overlapChars));
+        current = tail2;
+      }
+    }
+  }
+
+  pushChunk(current);
+  return chunks;
 }
 
 // ---------- main ----------
 async function main() {
-  // Required env (fail fast)
+  // Required env
   mustEnv("CONGRESS_API_KEY");
   mustEnv("CONGRESS_API_BASE");
+
   mustEnv("TYPESENSE_API_KEY");
   mustEnv("TYPESENSE_HOST");
   mustEnv("TYPESENSE_PORT");
   mustEnv("TYPESENSE_PROTOCOL");
   mustEnv("TYPESENSE_COLLECTION");
-  mustEnv("OPENAI_API_KEY");
+  mustEnv("TYPESENSE_CHUNKS_COLLECTION");
 
-  const reindexAll = envBool("REINDEX_ALL", false);
-  const limitPerRun = envInt("LIMIT_PER_RUN", 25);
-  const pageSize = envInt("CONGRESS_PAGE_SIZE", 100);
-  const tsBatchSize = envInt("TYPESENSE_BATCH_SIZE", 10);
+  mustEnv("OPENAI_API_KEY");
 
   const openai = new OpenAI({ apiKey: mustEnv("OPENAI_API_KEY") });
   const summaryModel = process.env.OPENAI_SUMMARY_MODEL || "gpt-4o-mini";
   const embedModel = process.env.OPENAI_EMBED_MODEL || "text-embedding-3-large";
+
+  const reindexAll = envBool("REINDEX_ALL", false);
+  const limitPerRunRaw = envInt("LIMIT_PER_RUN", 25);
+  const limitPerRun = limitPerRunRaw === 0 ? Number.MAX_SAFE_INTEGER : limitPerRunRaw;
+
+  const pageSize = envInt("CONGRESS_PAGE_SIZE", 100);
+  const tsBatchSize = envInt("TYPESENSE_BATCH_SIZE", 10);
+  const chunkBatchSize = envInt("CHUNK_BATCH_SIZE", 20);
 
   const congresses = (process.env.CONGRESSES || "119")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
 
+  const primaryCollection = mustEnv("TYPESENSE_COLLECTION");
+  const chunksCollection = mustEnv("TYPESENSE_CHUNKS_COLLECTION");
+
   const state = loadState();
   const prevMaxUpdate = state?.meta?.max_update_date_seen || null;
 
   log("=== Crawl start ===");
   log("Congresses:", congresses.join(", "));
-  log("LIMIT_PER_RUN:", limitPerRun);
+  log("LIMIT_PER_RUN:", limitPerRunRaw === 0 ? "all" : limitPerRunRaw);
   log("REINDEX_ALL:", reindexAll);
   log("Prev max_update_date_seen:", prevMaxUpdate);
   log("OpenAI summary model:", summaryModel);
   log("OpenAI embed model:", embedModel);
   log("Typesense batch size:", tsBatchSize);
+  log("Chunk batch size:", chunkBatchSize);
   log("Congress page size:", pageSize);
 
   let processed = 0;
   let newestUpdateSeenThisRun = null;
+
   let typesenseOk = 0;
   let typesenseFail = 0;
 
-  const docsBatch = [];
+  let chunksOk = 0;
+  let chunksFail = 0;
+
+  const billsBatch = [];
+  const chunksBatch = [];
+
   const startAll = Date.now();
 
   for (const congress of congresses) {
@@ -400,13 +516,11 @@ async function main() {
         break;
       }
 
-      for (let i = 0; i < bills.length; i++) {
+      for (const item of bills) {
         if (processed >= limitPerRun) break;
 
-        const item = bills[i];
         const billId = normalizeBillId(item.congress, item.type, item.number);
         const apiUpdateRaw = pickUpdateDate(item);
-
         if (!newestUpdateSeenThisRun && apiUpdateRaw) newestUpdateSeenThisRun = apiUpdateRaw;
 
         const prev = state.bills[billId];
@@ -415,16 +529,17 @@ async function main() {
         const shouldProcess = reindexAll ? true : (!prev || prevUpdate !== apiUpdateRaw);
         if (!shouldProcess) continue;
 
-        const idxLabel = `${processed + 1}/${limitPerRun}`;
+        const idxLabel = `${processed + 1}/${limitPerRunRaw === 0 ? "all" : limitPerRunRaw}`;
         log(`--- Processing ${idxLabel}: ${billId} (api_update=${apiUpdateRaw || "n/a"}) ---`);
 
-        // Detail fetch
+        // Detail
         const detailUrl = buildBillDetailUrl(item.congress, item.type, item.number);
         const tDetail0 = Date.now();
         const detailJson = await fetchJson(detailUrl, { label: "DETAIL", retries: 3 });
         log(`Detail fetched ${fmtMs(Date.now() - tDetail0)} for ${billId}`);
 
         const title = item.title || detailJson?.bill?.title || "";
+        const short_title = detailJson?.bill?.shortTitle || detailJson?.bill?.short_title || undefined;
         const chamber = item.originChamber || detailJson?.bill?.originChamber || undefined;
 
         const latest_action_text =
@@ -432,38 +547,40 @@ async function main() {
           detailJson?.bill?.latestAction?.text ||
           undefined;
 
+        const latest_action_date = extractLatestActionDate(detailJson, item);
+
         const update_date_raw = apiUpdateRaw;
         const update_date = toEpochSeconds(apiUpdateRaw);
         const introduced_date = extractIntroducedDate(detailJson);
         const policy_area = extractPolicyArea(detailJson);
+        const subjects = extractSubjects(detailJson);
         const { sponsor_party, sponsor_state } = extractSponsor(detailJson);
         const cosponsor_count = extractCosponsorCount(detailJson);
 
-        // Optional official summary
+        const { committees, committee_codes } = await fetchCommitteesIfNeeded(detailJson);
+
+        // Official summary (disk field — also indexed if you have it in schema; if not, it’s just stored)
         let official_summary = "";
         try {
-          const tSum0 = Date.now();
           official_summary = await getBestOfficialSummaryText(detailJson);
-          if (official_summary) {
-            log(`Official summary fetched ${fmtMs(Date.now() - tSum0)} (${official_summary.length} chars)`);
-          } else {
-            log(`Official summary not available`);
-          }
+          if (official_summary) log(`Official summary chars: ${official_summary.length}`);
         } catch (e) {
           warn(`Official summary fetch failed for ${billId}: ${String(e.message || e)}`);
         }
 
-        // AI summary
-        const aiInput = buildInputForAI({
-          title,
-          policy_area,
-          chamber,
-          latest_action_text,
-          sponsor_party,
-          sponsor_state,
-          official_summary
-        });
+        // AI summary input (small + high-signal)
+        const aiInput = [
+          `TITLE: ${title}`,
+          short_title ? `SHORT TITLE: ${short_title}` : "",
+          policy_area ? `POLICY AREA: ${policy_area}` : "",
+          chamber ? `CHAMBER: ${chamber}` : "",
+          sponsor_party || sponsor_state ? `SPONSOR: ${sponsor_party || "?"}-${sponsor_state || "?"}` : "",
+          committees?.length ? `COMMITTEES: ${committees.slice(0, 10).join("; ")}` : "",
+          latest_action_text ? `LATEST ACTION: ${latest_action_text}` : "",
+          official_summary ? `OFFICIAL SUMMARY: ${truncate(official_summary, 2500)}` : ""
+        ].filter(Boolean).join("\n");
 
+        // AI summary
         const summaryResp = await openaiWithRetry(
           () =>
             openai.responses.create({
@@ -476,14 +593,11 @@ async function main() {
                       type: "input_text",
                       text:
                         "Write a clear, plain-English summary of this U.S. Congress bill in 2–3 sentences. " +
-                        "Focus on what it does. Do not speculate. Do not use bullets. Avoid jargon."
+                        "Focus on what it does. Do not speculate. No bullets."
                     }
                   ]
                 },
-                {
-                  role: "user",
-                  content: [{ type: "input_text", text: aiInput }]
-                }
+                { role: "user", content: [{ type: "input_text", text: aiInput }] }
               ]
             }),
           { label: `summary ${billId}`, retries: 4 }
@@ -492,11 +606,14 @@ async function main() {
         const ai_summary_text = (summaryResp.output_text || "").trim() || title;
         log(`AI summary length: ${ai_summary_text.length} chars`);
 
-        // Embedding
-        const embedText = [title, ai_summary_text, policy_area ? `Policy area: ${policy_area}` : "", latest_action_text ? `Latest action: ${latest_action_text}` : ""]
-          .filter(Boolean)
-          .join("\n")
-          .replace(/\n/g, " ");
+        // Bill-level embedding (for bill discovery)
+        const embedText = [
+          title,
+          short_title || "",
+          ai_summary_text,
+          policy_area ? `Policy area: ${policy_area}` : "",
+          latest_action_text ? `Latest action: ${latest_action_text}` : ""
+        ].filter(Boolean).join("\n");
 
         const embResp = await openaiWithRetry(
           () =>
@@ -505,29 +622,31 @@ async function main() {
               input: embedText,
               encoding_format: "float"
             }),
-          { label: `embed ${billId}`, retries: 4 }
+          { label: `embed(bill) ${billId}`, retries: 4 }
         );
 
         const embedding = embResp?.data?.[0]?.embedding;
         if (!Array.isArray(embedding)) throw new Error(`Embedding missing/invalid for ${billId}`);
         if (embedding.length !== 3072) throw new Error(`Embedding dim mismatch for ${billId}: got ${embedding.length}, expected 3072`);
-        log(`Embedding ok (dim=${embedding.length})`);
+        log(`Bill embedding ok (dim=${embedding.length})`);
 
-        // Build Typesense doc (matches your lean schema)
-        const doc = {
+        // Build bill doc (matches your schema + extra disk fields OK)
+        const billDoc = {
           id: billId,
           congress: item.congress,
-          type: String(item.type || "").toLowerCase(),
+          type: safeLower(item.type),
           number: parseInt(item.number, 10),
 
           chamber,
-          title,
-
-          ai_summary_text,
-          embedding,
-
-          update_date,
           introduced_date,
+          update_date,
+
+          title,
+          short_title,
+          ai_summary_text,
+
+          policy_area,
+          subjects,
 
           sponsor_party,
           sponsor_state,
@@ -535,13 +654,80 @@ async function main() {
 
           latest_action_text,
 
-          // extra UI/debug fields (stored even if not in schema)
-          update_date_raw,
-          api_url: item.url || undefined,
-          official_summary: official_summary || undefined
+          status: undefined,           // (you can add inference later if you already have it in schema)
+          committee_stage: undefined,  // (same)
+
+          committees,
+          committee_codes,
+
+          embedding,
+
+          // Disk-only extras for UI/debug
+          api_url: (item.url || detailUrl) || undefined,
+          official_summary: official_summary || undefined,
+          update_date_raw: update_date_raw || undefined,
+          latest_action_date: latest_action_date || undefined
         };
 
-        docsBatch.push(doc);
+        billsBatch.push(billDoc);
+
+        // -------- Bill text -> chunks --------
+        try {
+          const tText0 = Date.now();
+          const { text: fullText, source_url, version_label } = await fetchBillTextPlain(item.congress, item.type, item.number);
+          log(`Bill text fetched ${fmtMs(Date.now() - tText0)} chars=${fullText.length}`);
+
+          if (fullText && fullText.length > 200) {
+            const chunks = chunkText(fullText, { maxChars: 5500, overlapChars: 600 });
+            log(`Chunked into ${chunks.length} chunks`);
+
+            // Embed + enqueue chunk docs
+            for (let ci = 0; ci < chunks.length; ci++) {
+              const chunkTextStr = chunks[ci];
+
+              const chEmbResp = await openaiWithRetry(
+                () =>
+                  openai.embeddings.create({
+                    model: embedModel,
+                    input: chunkTextStr,
+                    encoding_format: "float"
+                  }),
+                { label: `embed(chunk) ${billId}#${ci}`, retries: 4 }
+              );
+
+              const chEmbedding = chEmbResp?.data?.[0]?.embedding;
+              if (!Array.isArray(chEmbedding)) throw new Error(`Chunk embedding missing for ${billId}#${ci}`);
+              if (chEmbedding.length !== 3072) throw new Error(`Chunk embedding dim mismatch for ${billId}#${ci}`);
+
+              const chunkId = `${billId}#${String(ci).padStart(5, "0")}`;
+
+              chunksBatch.push({
+                id: chunkId,
+                bill_id: billId,
+                congress: item.congress,
+                type: safeLower(item.type),
+                number: parseInt(item.number, 10),
+                chunk_index: ci,
+                text: chunkTextStr,
+                update_date,
+                source_url: source_url || undefined,
+                version_label: version_label || undefined,
+                embedding: chEmbedding
+              });
+
+              if (chunksBatch.length >= chunkBatchSize) {
+                const r = await typesenseImportUpsert(chunksBatch, chunksCollection);
+                chunksOk += r.success;
+                chunksFail += r.failed;
+                chunksBatch.length = 0;
+              }
+            }
+          } else {
+            warn("No usable bill text returned (too short/empty). Skipping chunks.");
+          }
+        } catch (e) {
+          warn(`Bill text/chunking failed for ${billId}: ${String(e.message || e)}`);
+        }
 
         // Update state
         state.bills[billId] = {
@@ -552,12 +738,12 @@ async function main() {
 
         processed++;
 
-        // Flush batch frequently so you can watch progress
-        if (docsBatch.length >= tsBatchSize) {
-          const r = await typesenseImportUpsert(docsBatch);
+        // Flush bills batch
+        if (billsBatch.length >= tsBatchSize) {
+          const r = await typesenseImportUpsert(billsBatch, primaryCollection);
           typesenseOk += r.success;
           typesenseFail += r.failed;
-          docsBatch.length = 0;
+          billsBatch.length = 0;
         }
 
         log(`--- Finished ${idxLabel}: ${billId} ---`);
@@ -568,11 +754,17 @@ async function main() {
   }
 
   // Final flush
-  if (docsBatch.length) {
-    const r = await typesenseImportUpsert(docsBatch);
+  if (billsBatch.length) {
+    const r = await typesenseImportUpsert(billsBatch, primaryCollection);
     typesenseOk += r.success;
     typesenseFail += r.failed;
-    docsBatch.length = 0;
+    billsBatch.length = 0;
+  }
+  if (chunksBatch.length) {
+    const r = await typesenseImportUpsert(chunksBatch, chunksCollection);
+    chunksOk += r.success;
+    chunksFail += r.failed;
+    chunksBatch.length = 0;
   }
 
   // meta
@@ -582,9 +774,9 @@ async function main() {
   saveState(state);
 
   log("=== Crawl complete ===");
-  log("Processed (attempted):", processed);
-  log("Typesense imported ok:", typesenseOk);
-  log("Typesense failed:", typesenseFail);
+  log("Bills processed:", processed);
+  log("Typesense bills ok:", typesenseOk, "failed:", typesenseFail);
+  log("Typesense chunks ok:", chunksOk, "failed:", chunksFail);
   log("New max_update_date_seen:", state.meta.max_update_date_seen);
   log("Total duration:", fmtMs(Date.now() - startAll));
 }
