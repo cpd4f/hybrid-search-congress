@@ -1,26 +1,35 @@
-name: Crawl Congress -> Typesense (Bills + Chunks)
+name: Crawl Congress -> OpenAI -> Typesense
 
 on:
   workflow_dispatch:
     inputs:
-      run_size:
-        description: "How many bills to process this run"
+      congresses:
+        description: 'Comma-separated congress numbers (e.g., "119" or "119,118")'
+        required: false
+        default: "119"
+        type: string
+
+      limit_per_run:
+        description: "How many bills to process (All = 0)"
+        required: false
+        default: "25"
         type: choice
-        required: true
-        default: all
         options:
-          - all
+          - "0"
           - "25"
           - "100"
           - "500"
-      reindex_all:
-        description: "Re-index bills even if unchanged (checkbox)"
-        type: boolean
-        required: true
-        default: false
+          - "1000"
 
-  schedule:
-    - cron: "17 6 * * *" # daily 06:17 UTC
+      index_mode:
+        description: "Index mode"
+        required: false
+        default: "upsert_new_updated"
+        type: choice
+        options:
+          - upsert_new_updated
+          - upsert_new_updated_fix_tracking
+          - reindex_all
 
 permissions:
   contents: write
@@ -28,49 +37,54 @@ permissions:
 jobs:
   crawl:
     runs-on: ubuntu-latest
+    timeout-minutes: 355
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 1
 
-      - name: Set up Node
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install deps
-        run: npm install
-
-      - name: Resolve run size
-        id: runsize
+      - name: Install deps (works with or without package.json)
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            SIZE="${{ inputs.run_size }}"
+          set -euo pipefail
+          if [ -f package.json ]; then
+            echo "package.json found."
+            if [ -f package-lock.json ]; then
+              echo "package-lock.json found -> npm ci"
+              npm ci
+            else
+              echo "No lockfile -> npm install"
+              npm install
+            fi
           else
-            SIZE="all"
+            echo "No package.json -> creating minimal package.json + installing deps"
+            npm init -y
+            npm install openai undici
           fi
-
-          if [ "$SIZE" = "all" ]; then
-            echo "limit_per_run=0" >> $GITHUB_OUTPUT
-          else
-            echo "limit_per_run=$SIZE" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Gate scheduled runs
-        if: ${{ github.event_name == 'schedule' && vars.AUTO_CRAWL_ENABLED != 'true' }}
-        run: |
-          echo "Scheduled runs are disabled (vars.AUTO_CRAWL_ENABLED != true). Exiting."
-          exit 0
 
       - name: Run crawler
         env:
-          CONGRESS_API_KEY: ${{ secrets.CONGRESS_API_KEY }}
-          CONGRESS_API_BASE: ${{ vars.CONGRESS_API_BASE }}
-          CONGRESSES: "119"
+          # Inputs
+          CONGRESSES: ${{ inputs.congresses }}
+          LIMIT_PER_RUN: ${{ inputs.limit_per_run }}
+          INDEX_MODE: ${{ inputs.index_mode }}
 
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Repo variables
+          CONGRESS_API_BASE: ${{ vars.CONGRESS_API_BASE }}
           OPENAI_SUMMARY_MODEL: ${{ vars.OPENAI_SUMMARY_MODEL }}
           OPENAI_EMBED_MODEL: ${{ vars.OPENAI_EMBED_MODEL }}
 
+          # Secrets
+          CONGRESS_API_KEY: ${{ secrets.CONGRESS_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           TYPESENSE_API_KEY: ${{ secrets.TYPESENSE_API_KEY }}
           TYPESENSE_HOST: ${{ secrets.TYPESENSE_HOST }}
           TYPESENSE_PORT: ${{ secrets.TYPESENSE_PORT }}
@@ -78,23 +92,25 @@ jobs:
           TYPESENSE_COLLECTION: ${{ secrets.TYPESENSE_COLLECTION }}
           TYPESENSE_CHUNKS_COLLECTION: ${{ secrets.TYPESENSE_CHUNKS_COLLECTION }}
 
-          LIMIT_PER_RUN: ${{ steps.runsize.outputs.limit_per_run }}
-          REINDEX_ALL: ${{ github.event_name == 'workflow_dispatch' && inputs.reindex_all || 'false' }}
-
-          TYPESENSE_BATCH_SIZE: "10"
+          # Tuning (optional)
           CONGRESS_PAGE_SIZE: "100"
+          TYPESENSE_BATCH_SIZE: "10"
           CHUNK_BATCH_SIZE: "20"
-
         run: node scripts/crawl_congress.js
 
-      - name: Commit state file
+      - name: Commit updated state
+        shell: bash
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add state/bills_state.json
+
+          git add state/bills_state.json || true
+
           if git diff --cached --quiet; then
             echo "No state changes to commit."
             exit 0
           fi
+
           git commit -m "Update bills_state.json"
           git push
