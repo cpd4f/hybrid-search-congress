@@ -2,6 +2,11 @@ name: Crawl Congress Bills -> Typesense
 
 on:
   workflow_dispatch:
+    inputs:
+      reindex_all:
+        description: "Re-index all items (ignores state). WARNING: costs OpenAI $."
+        required: false
+        default: "false"
   schedule:
     - cron: "0 */6 * * *" # every 6 hours
 
@@ -16,8 +21,7 @@ jobs:
   crawl:
     runs-on: ubuntu-latest
 
-    # 🔐 Only allow scheduled runs if toggle is true.
-    # Manual runs (workflow_dispatch) always allowed.
+    # Scheduled runs only if toggle is enabled. Manual runs always allowed.
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'schedule' && vars.AUTO_CRAWL_ENABLED == 'true')
@@ -36,7 +40,7 @@ jobs:
       - name: Install deps
         run: |
           npm init -y
-          npm i undici
+          npm i undici openai
 
       - name: Run crawler
         env:
@@ -49,8 +53,15 @@ jobs:
           TYPESENSE_PROTOCOL: ${{ secrets.TYPESENSE_PROTOCOL }}
           TYPESENSE_COLLECTION: ${{ secrets.TYPESENSE_COLLECTION }}
 
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_SUMMARY_MODEL: ${{ vars.OPENAI_SUMMARY_MODEL }}
+          OPENAI_EMBED_MODEL: ${{ vars.OPENAI_EMBED_MODEL }}
+
           CONGRESSES: "119"
           LIMIT_PER_RUN: "25"
+
+          # ✅ Nuclear option (manual input; scheduled defaults to false)
+          REINDEX_ALL: ${{ github.event_name == 'workflow_dispatch' && inputs.reindex_all || 'false' }}
         run: |
           node scripts/crawl_congress.js
 
