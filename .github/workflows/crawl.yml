@@ -1,0 +1,68 @@
+name: Crawl Congress Bills -> Typesense
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *" # every 6 hours
+
+permissions:
+  contents: write
+
+concurrency:
+  group: crawl-congress
+  cancel-in-progress: true
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+
+    # 🔐 Only allow scheduled runs if toggle is true.
+    # Manual runs (workflow_dispatch) always allowed.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && vars.AUTO_CRAWL_ENABLED == 'true')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: |
+          npm init -y
+          npm i undici
+
+      - name: Run crawler
+        env:
+          CONGRESS_API_KEY: ${{ secrets.CONGRESS_API_KEY }}
+          CONGRESS_API_BASE: ${{ vars.CONGRESS_API_BASE }}
+
+          TYPESENSE_API_KEY: ${{ secrets.TYPESENSE_API_KEY }}
+          TYPESENSE_HOST: ${{ secrets.TYPESENSE_HOST }}
+          TYPESENSE_PORT: ${{ secrets.TYPESENSE_PORT }}
+          TYPESENSE_PROTOCOL: ${{ secrets.TYPESENSE_PROTOCOL }}
+          TYPESENSE_COLLECTION: ${{ secrets.TYPESENSE_COLLECTION }}
+
+          CONGRESSES: "119"
+          LIMIT_PER_RUN: "25"
+        run: |
+          node scripts/crawl_congress.js
+
+      - name: Commit updated state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [ -n "$(git status --porcelain state/bills_state.json)" ]; then
+            git add state/bills_state.json
+            git commit -m "Update bills_state.json"
+            git push
+          else
+            echo "No state changes to commit."
+          fi
