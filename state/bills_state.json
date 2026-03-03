@@ -1,6 +1,6 @@
 {
   "meta": {
-    "last_run_utc": "2026-03-03T10:23:35.455Z",
+    "last_run_utc": "2026-03-03T10:38:22.868Z",
     "max_update_date_seen": "2025-01-13"
   },
   "bills": {
@@ -126,6 +126,506 @@
     },
     "119-sconres-2": {
       "update_date": "2025-01-30",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-15": {
+      "update_date": "2025-01-30",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-13": {
+      "update_date": "2025-01-30",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-12": {
+      "update_date": "2025-01-30",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-11": {
+      "update_date": "2025-01-30",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-10": {
+      "update_date": "2025-01-30",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-9": {
+      "update_date": "2025-01-30",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-8": {
+      "update_date": "2025-01-30",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-7": {
+      "update_date": "2025-01-30",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-110": {
+      "update_date": "2025-01-31",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-14": {
+      "update_date": "2025-01-31",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-15": {
+      "update_date": "2025-01-31",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-13": {
+      "update_date": "2025-01-31",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-18": {
+      "update_date": "2025-02-03",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-55": {
+      "update_date": "2025-02-03",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-65": {
+      "update_date": "2025-02-03",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-123": {
+      "update_date": "2025-02-03",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-28": {
+      "update_date": "2025-02-03",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hjres-16": {
+      "update_date": "2025-02-03",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-22": {
+      "update_date": "2025-02-03",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-16": {
+      "update_date": "2025-02-03",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-19": {
+      "update_date": "2025-02-03",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-94": {
+      "update_date": "2025-02-04",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-93": {
+      "update_date": "2025-02-04",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-30": {
+      "update_date": "2025-02-04",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-29": {
+      "update_date": "2025-02-04",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-23": {
+      "update_date": "2025-02-04",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-31": {
+      "update_date": "2025-02-05",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-78": {
+      "update_date": "2025-02-05",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-57": {
+      "update_date": "2025-02-06",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-37": {
+      "update_date": "2025-02-06",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-118": {
+      "update_date": "2025-02-06",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-34": {
+      "update_date": "2025-02-06",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-95": {
+      "update_date": "2025-02-06",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-39": {
+      "update_date": "2025-02-07",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-36": {
+      "update_date": "2025-02-07",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-40": {
+      "update_date": "2025-02-07",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-38": {
+      "update_date": "2025-02-07",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-sres-26": {
+      "update_date": "2025-02-07",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-43": {
+      "update_date": "2025-02-07",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-42": {
+      "update_date": "2025-02-07",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-44": {
+      "update_date": "2025-02-07",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hconres-2": {
+      "update_date": "2025-02-07",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-776": {
+      "update_date": "2025-02-08",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-283": {
+      "update_date": "2025-02-10",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-157": {
+      "update_date": "2025-02-10",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-278": {
+      "update_date": "2025-02-10",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-270": {
+      "update_date": "2025-02-10",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-s-55": {
+      "update_date": "2025-02-10",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-52": {
+      "update_date": "2025-02-11",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-108": {
+      "update_date": "2025-02-11",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-254": {
+      "update_date": "2025-02-11",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-68": {
+      "update_date": "2025-02-11",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-166": {
+      "update_date": "2025-02-11",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-91": {
+      "update_date": "2025-02-11",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-213": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-81": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-144": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-189": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-321": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-105": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-s-69": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-62": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-63": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-99": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-89": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-65": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-72": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-69": {
+      "update_date": "2025-02-12",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-386": {
+      "update_date": "2025-02-13",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-92": {
+      "update_date": "2025-02-13",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-341": {
+      "update_date": "2025-02-13",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-393": {
+      "update_date": "2025-02-13",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hjres-45": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hjres-18": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hjres-47": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hjres-53": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hjres-48": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hjres-51": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hjres-52": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-123": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-310": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-364": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-354": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-363": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-365": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-368": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-111": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-132": {
+      "update_date": "2025-02-14",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-71": {
+      "update_date": "2025-02-15",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-519": {
+      "update_date": "2025-02-15",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-444": {
+      "update_date": "2025-02-18",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-106": {
+      "update_date": "2025-02-18",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-181": {
+      "update_date": "2025-02-18",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-352": {
+      "update_date": "2025-02-18",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-132": {
+      "update_date": "2025-02-18",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hconres-13": {
+      "update_date": "2025-02-18",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hres-141": {
+      "update_date": "2025-02-18",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-351": {
+      "update_date": "2025-02-18",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-334": {
+      "update_date": "2025-02-19",
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large"
+    },
+    "119-hr-190": {
+      "update_date": "2025-02-19",
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large"
     }
