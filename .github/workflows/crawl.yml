@@ -34,13 +34,9 @@ jobs:
         with:
           node-version: "20"
 
-      # npm ci requires package-lock.json; npm install does not.
       - name: Install deps
         run: npm install
 
-      # Resolve LIMIT_PER_RUN:
-      # - Manual runs: use dropdown
-      # - Scheduled runs: default to "all"
       - name: Resolve run size
         id: runsize
         run: |
@@ -56,11 +52,11 @@ jobs:
             echo "limit_per_run=$SIZE" >> $GITHUB_OUTPUT
           fi
 
-      # Gate scheduled runs with repo variable ENABLE_SCHEDULED_RUNS=true
+      # Gate scheduled runs using your repo variable AUTO_CRAWL_ENABLED=true
       - name: Gate scheduled runs
-        if: ${{ github.event_name == 'schedule' && vars.ENABLE_SCHEDULED_RUNS != 'true' }}
+        if: ${{ github.event_name == 'schedule' && vars.AUTO_CRAWL_ENABLED != 'true' }}
         run: |
-          echo "Scheduled runs are disabled (vars.ENABLE_SCHEDULED_RUNS != true). Exiting."
+          echo "Scheduled runs are disabled (vars.AUTO_CRAWL_ENABLED != true). Exiting."
           exit 0
 
       - name: Run crawler
@@ -68,29 +64,29 @@ jobs:
           # Congress
           CONGRESS_API_KEY: ${{ secrets.CONGRESS_API_KEY }}
           CONGRESS_API_BASE: ${{ vars.CONGRESS_API_BASE }}
-          CONGRESSES: ${{ vars.CONGRESSES }}
+          CONGRESSES: "119"
 
           # OpenAI
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_SUMMARY_MODEL: ${{ vars.OPENAI_SUMMARY_MODEL }}
           OPENAI_EMBED_MODEL: ${{ vars.OPENAI_EMBED_MODEL }}
 
-          # Typesense
+          # Typesense (ALL are secrets in your repo)
           TYPESENSE_API_KEY: ${{ secrets.TYPESENSE_API_KEY }}
-          TYPESENSE_HOST: ${{ vars.TYPESENSE_HOST }}
-          TYPESENSE_PORT: ${{ vars.TYPESENSE_PORT }}
-          TYPESENSE_PROTOCOL: ${{ vars.TYPESENSE_PROTOCOL }}
-          TYPESENSE_COLLECTION: ${{ vars.TYPESENSE_COLLECTION }}
-          TYPESENSE_CHUNKS_COLLECTION: ${{ vars.TYPESENSE_CHUNKS_COLLECTION }}
+          TYPESENSE_HOST: ${{ secrets.TYPESENSE_HOST }}
+          TYPESENSE_PORT: ${{ secrets.TYPESENSE_PORT }}
+          TYPESENSE_PROTOCOL: ${{ secrets.TYPESENSE_PROTOCOL }}
+          TYPESENSE_COLLECTION: ${{ secrets.TYPESENSE_COLLECTION }}
+          TYPESENSE_CHUNKS_COLLECTION: ${{ secrets.TYPESENSE_CHUNKS_COLLECTION }}
 
           # Run controls
           LIMIT_PER_RUN: ${{ steps.runsize.outputs.limit_per_run }}
           REINDEX_ALL: ${{ github.event_name == 'workflow_dispatch' && inputs.reindex_all || 'false' }}
 
-          # Tuning (optional vars — set them or leave unset)
-          TYPESENSE_BATCH_SIZE: ${{ vars.TYPESENSE_BATCH_SIZE }}
-          CONGRESS_PAGE_SIZE: ${{ vars.CONGRESS_PAGE_SIZE }}
-          CHUNK_BATCH_SIZE: ${{ vars.CHUNK_BATCH_SIZE }}
+          # Optional tuning (set these as repo vars later if you want)
+          TYPESENSE_BATCH_SIZE: "10"
+          CONGRESS_PAGE_SIZE: "100"
+          CHUNK_BATCH_SIZE: "20"
 
         run: node scripts/crawl_congress.js
 
