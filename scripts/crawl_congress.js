@@ -2,6 +2,10 @@
  * Congress -> OpenAI (AI summary + embedding) -> Typesense upsert
  * With real-time, high-signal logs for GitHub Actions.
  *
+ * Fix included:
+ * - Congress "summaries.url" is returned without api_key, causing 403 API_KEY_MISSING.
+ *   We now "sign" any Congress.gov API URL by appending api_key if missing.
+ *
  * Key features:
  * - REINDEX_ALL=true to ignore state and reprocess everything (within LIMIT_PER_RUN)
  * - Timestamped logs + per-bill progress
@@ -34,7 +38,6 @@ const STATE_PATH = path.join("state", "bills_state.json");
 
 // ---------- logging ----------
 function ts() {
-  // ISO with seconds
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 function log(...args) {
@@ -122,7 +125,7 @@ function pickUpdateDate(item) {
   return item.updateDateIncludingText || item.updateDate || null;
 }
 
-// ---------- URL builders ----------
+// ---------- URL helpers/builders ----------
 function buildCongressListUrl(congress, limit, offset) {
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
   const key = mustEnv("CONGRESS_API_KEY");
@@ -132,6 +135,17 @@ function buildBillDetailUrl(congress, billType, billNumber) {
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
   const key = mustEnv("CONGRESS_API_KEY");
   return `${base}/${congress}/${String(billType).toLowerCase()}/${billNumber}?format=json&api_key=${encodeURIComponent(key)}`;
+}
+
+/**
+ * Congress API sometimes returns URL fields (e.g., summaries.url) WITHOUT api_key.
+ * This function appends api_key if missing.
+ */
+function withCongressApiKey(url) {
+  const key = mustEnv("CONGRESS_API_KEY");
+  const u = new URL(url);
+  if (!u.searchParams.has("api_key")) u.searchParams.set("api_key", key);
+  return u.toString();
 }
 
 // ---------- robust fetchers ----------
@@ -150,7 +164,6 @@ async function fetchText(url, { label = "GET", retries = 3 } = {}) {
         return text;
       }
 
-      // Retry for common transient statuses
       const retryable = [429, 500, 502, 503, 504].includes(res.statusCode);
       const preview = text.slice(0, 300).replace(/\s+/g, " ");
       warn(`HTTP ${res.statusCode} ${label} ${fmtMs(dur)} attempt ${attempt}/${retries} :: ${preview}`);
@@ -186,7 +199,10 @@ async function getBestOfficialSummaryText(detailJson) {
   const summariesUrl = summariesObj?.url;
   if (!summariesUrl) return "";
 
-  const data = await fetchJson(summariesUrl, { label: "SUMMARIES", retries: 2 });
+  // ✅ FIX: append api_key if missing
+  const signed = withCongressApiKey(summariesUrl);
+
+  const data = await fetchJson(signed, { label: "SUMMARIES", retries: 2 });
   const arr = data?.summaries || data?.results || data;
   if (!Array.isArray(arr) || !arr.length) return "";
 
@@ -253,7 +269,6 @@ async function openaiWithRetry(fn, { label, retries = 4 } = {}) {
 
       if (!retryable || attempt >= retries) throw e;
 
-      // Respect Retry-After if present (OpenAI SDK may expose headers on e.response)
       const retryAfterHeader =
         e?.response?.headers?.get?.("retry-after") ||
         e?.response?.headers?.["retry-after"] ||
@@ -320,11 +335,7 @@ async function typesenseImportUpsert(docs) {
   }
 
   log(`Typesense import ${fmtMs(dur)} => ${success} ok, ${failed} failed (batch ${docs.length})`);
-  if (failed) {
-    // show a few errors for quick debugging
-    warn("Typesense sample errors:", errors.slice(0, 5));
-  }
-
+  if (failed) warn("Typesense sample errors:", errors.slice(0, 5));
   return { success, failed, errors };
 }
 
@@ -387,16 +398,6 @@ async function main() {
       if (!Array.isArray(bills) || bills.length === 0) {
         log(`No bills returned for congress ${congress} at offset ${offset}.`);
         break;
-      }
-
-      // Optional early-exit signal (still safe even with reindexAll)
-      if (!reindexAll && prevMaxUpdate) {
-        const lastOnPage = bills[bills.length - 1];
-        const lastUpdate = pickUpdateDate(lastOnPage);
-        // If the page ends before our previously-known horizon, future pages are likely older
-        if (lastUpdate && lastUpdate < prevMaxUpdate) {
-          log(`Early-stop hint: last update on page (${lastUpdate}) < prev max (${prevMaxUpdate}). We'll finish scanning this page then stop paging further.`);
-        }
       }
 
       for (let i = 0; i < bills.length; i++) {
@@ -492,12 +493,7 @@ async function main() {
         log(`AI summary length: ${ai_summary_text.length} chars`);
 
         // Embedding
-        const embedText = [
-          title,
-          ai_summary_text,
-          policy_area ? `Policy area: ${policy_area}` : "",
-          latest_action_text ? `Latest action: ${latest_action_text}` : ""
-        ]
+        const embedText = [title, ai_summary_text, policy_area ? `Policy area: ${policy_area}` : "", latest_action_text ? `Latest action: ${latest_action_text}` : ""]
           .filter(Boolean)
           .join("\n")
           .replace(/\n/g, " ");
@@ -514,9 +510,7 @@ async function main() {
 
         const embedding = embResp?.data?.[0]?.embedding;
         if (!Array.isArray(embedding)) throw new Error(`Embedding missing/invalid for ${billId}`);
-        if (embedding.length !== 3072) {
-          throw new Error(`Embedding dim mismatch for ${billId}: got ${embedding.length}, expected 3072`);
-        }
+        if (embedding.length !== 3072) throw new Error(`Embedding dim mismatch for ${billId}: got ${embedding.length}, expected 3072`);
         log(`Embedding ok (dim=${embedding.length})`);
 
         // Build Typesense doc (matches your lean schema)
@@ -549,7 +543,7 @@ async function main() {
 
         docsBatch.push(doc);
 
-        // Update state for this bill immediately (we still write once at end)
+        // Update state
         state.bills[billId] = {
           update_date: apiUpdateRaw,
           ai_summary_model: summaryModel,
@@ -558,7 +552,7 @@ async function main() {
 
         processed++;
 
-        // Flush batch frequently so you can see progress in real time
+        // Flush batch frequently so you can watch progress
         if (docsBatch.length >= tsBatchSize) {
           const r = await typesenseImportUpsert(docsBatch);
           typesenseOk += r.success;
@@ -567,16 +561,6 @@ async function main() {
         }
 
         log(`--- Finished ${idxLabel}: ${billId} ---`);
-      }
-
-      // Early-stop paging (only when not reindexing)
-      if (!reindexAll && prevMaxUpdate) {
-        const lastOnPage = bills[bills.length - 1];
-        const lastUpdate = pickUpdateDate(lastOnPage);
-        if (lastUpdate && lastUpdate < prevMaxUpdate) {
-          log(`Paging stop: last update on page (${lastUpdate}) < prev max (${prevMaxUpdate}).`);
-          break;
-        }
       }
 
       offset += pageSize;
