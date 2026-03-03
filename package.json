@@ -1,0 +1,12 @@
+{
+  "name": "hybrid-search-congress",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "crawl": "node scripts/crawl_congress.js"
+  },
+  "dependencies": {
+    "openai": "^4.0.0",
+    "undici": "^6.0.0"
+  }
+}
