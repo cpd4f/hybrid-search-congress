@@ -22,6 +22,9 @@ on:
   schedule:
     - cron: "17 6 * * *" # daily 06:17 UTC
 
+permissions:
+  contents: write
+
 jobs:
   crawl:
     runs-on: ubuntu-latest
@@ -52,7 +55,6 @@ jobs:
             echo "limit_per_run=$SIZE" >> $GITHUB_OUTPUT
           fi
 
-      # Gate scheduled runs using your repo variable AUTO_CRAWL_ENABLED=true
       - name: Gate scheduled runs
         if: ${{ github.event_name == 'schedule' && vars.AUTO_CRAWL_ENABLED != 'true' }}
         run: |
@@ -61,17 +63,14 @@ jobs:
 
       - name: Run crawler
         env:
-          # Congress
           CONGRESS_API_KEY: ${{ secrets.CONGRESS_API_KEY }}
           CONGRESS_API_BASE: ${{ vars.CONGRESS_API_BASE }}
           CONGRESSES: "119"
 
-          # OpenAI
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_SUMMARY_MODEL: ${{ vars.OPENAI_SUMMARY_MODEL }}
           OPENAI_EMBED_MODEL: ${{ vars.OPENAI_EMBED_MODEL }}
 
-          # Typesense (ALL are secrets in your repo)
           TYPESENSE_API_KEY: ${{ secrets.TYPESENSE_API_KEY }}
           TYPESENSE_HOST: ${{ secrets.TYPESENSE_HOST }}
           TYPESENSE_PORT: ${{ secrets.TYPESENSE_PORT }}
@@ -79,11 +78,9 @@ jobs:
           TYPESENSE_COLLECTION: ${{ secrets.TYPESENSE_COLLECTION }}
           TYPESENSE_CHUNKS_COLLECTION: ${{ secrets.TYPESENSE_CHUNKS_COLLECTION }}
 
-          # Run controls
           LIMIT_PER_RUN: ${{ steps.runsize.outputs.limit_per_run }}
           REINDEX_ALL: ${{ github.event_name == 'workflow_dispatch' && inputs.reindex_all || 'false' }}
 
-          # Optional tuning (set these as repo vars later if you want)
           TYPESENSE_BATCH_SIZE: "10"
           CONGRESS_PAGE_SIZE: "100"
           CHUNK_BATCH_SIZE: "20"
