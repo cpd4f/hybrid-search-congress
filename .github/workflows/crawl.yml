@@ -34,11 +34,13 @@ jobs:
         with:
           node-version: "20"
 
+      # npm ci requires package-lock.json; npm install does not.
       - name: Install deps
-        run: npm ci
+        run: npm install
 
-      # Decide LIMIT_PER_RUN from the workflow input.
-      # For scheduled runs, default to "all".
+      # Resolve LIMIT_PER_RUN:
+      # - Manual runs: use dropdown
+      # - Scheduled runs: default to "all"
       - name: Resolve run size
         id: runsize
         run: |
@@ -54,7 +56,7 @@ jobs:
             echo "limit_per_run=$SIZE" >> $GITHUB_OUTPUT
           fi
 
-      # Gate scheduled runs with repo variable ENABLE_SCHEDULED_RUNS
+      # Gate scheduled runs with repo variable ENABLE_SCHEDULED_RUNS=true
       - name: Gate scheduled runs
         if: ${{ github.event_name == 'schedule' && vars.ENABLE_SCHEDULED_RUNS != 'true' }}
         run: |
@@ -73,23 +75,19 @@ jobs:
           OPENAI_SUMMARY_MODEL: ${{ vars.OPENAI_SUMMARY_MODEL }}
           OPENAI_EMBED_MODEL: ${{ vars.OPENAI_EMBED_MODEL }}
 
-          # Typesense (primary bills)
+          # Typesense
           TYPESENSE_API_KEY: ${{ secrets.TYPESENSE_API_KEY }}
           TYPESENSE_HOST: ${{ vars.TYPESENSE_HOST }}
           TYPESENSE_PORT: ${{ vars.TYPESENSE_PORT }}
           TYPESENSE_PROTOCOL: ${{ vars.TYPESENSE_PROTOCOL }}
           TYPESENSE_COLLECTION: ${{ vars.TYPESENSE_COLLECTION }}
-
-          # Typesense (chunks)
           TYPESENSE_CHUNKS_COLLECTION: ${{ vars.TYPESENSE_CHUNKS_COLLECTION }}
 
           # Run controls
           LIMIT_PER_RUN: ${{ steps.runsize.outputs.limit_per_run }}
-
-          # Checkbox -> "true"/"false"
           REINDEX_ALL: ${{ github.event_name == 'workflow_dispatch' && inputs.reindex_all || 'false' }}
 
-          # Tuning
+          # Tuning (optional vars — set them or leave unset)
           TYPESENSE_BATCH_SIZE: ${{ vars.TYPESENSE_BATCH_SIZE }}
           CONGRESS_PAGE_SIZE: ${{ vars.CONGRESS_PAGE_SIZE }}
           CHUNK_BATCH_SIZE: ${{ vars.CHUNK_BATCH_SIZE }}
