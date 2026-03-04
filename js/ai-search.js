@@ -1,33 +1,29 @@
 /* ---------------------------------------------------
    AI SEARCH (Typesense hybrid vector search via Workers)
-   - No Pinecone
-   - Query embeddings from OpenAI Worker
-   - Hybrid search in Typesense via vector_query
-   - Uses POST to Typesense search endpoint (avoids URL length limits)
+   - Recent bills: GET /collections/:collection/documents/search (small query)
+   - Search: POST /multi_search (vector payload in body)
+   - OpenAI embeddings: POST /embeddings (OpenAI proxy worker)
 --------------------------------------------------- */
 
 (function () {
   "use strict";
 
-  /* ---------------------------------------------------
-     CONFIG
-  --------------------------------------------------- */
-
-  // Your Workers:
+  // Workers
   const TYPESENSE_WORKER_BASE = "https://typesense-proxy-worker.colemandavis4.workers.dev";
   const OPENAI_WORKER_BASE = "https://openai-proxy-worker.colemandavis4.workers.dev";
 
-  // Typesense collection name (fallback to APP_CONFIG if present)
+  // Collection
   const COLLECTION =
     (window.APP_CONFIG && window.APP_CONFIG.TYPESENSE_INDEX) ||
     "congress_bills";
 
-  // Embeddings model
+  // Models / tuning
   const EMBED_MODEL =
     (window.APP_CONFIG && window.APP_CONFIG.OPENAI_EMBED_MODEL) ||
     "text-embedding-3-large";
 
-  // Search defaults
+  const EXPECTED_EMBED_DIMS = 3072;
+
   const RECENT_LIMIT =
     (window.APP_CONFIG && window.APP_CONFIG.RECENT_BILLS_LIMIT) ||
     12;
@@ -36,29 +32,21 @@
     (window.APP_CONFIG && window.APP_CONFIG.RESULTS_PER_PAGE) ||
     20;
 
-  // Hybrid weighting: 0..1 (higher = more semantic)
   const DEFAULT_ALPHA =
     (window.APP_CONFIG && window.APP_CONFIG.HYBRID_ALPHA) ||
     0.65;
 
-  // Embedding dims must match your Typesense schema
-  const EXPECTED_EMBED_DIMS = 3072;
-
-  // Endpoints
-  const TS_SEARCH_URL =
+  // Endpoints (NO /typesense prefix needed; worker supports it, but keep it simple)
+  const TS_DOCS_SEARCH =
     `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
 
-  // OpenAI worker should expose /embeddings (maps to /v1/embeddings upstream)
+  const TS_MULTI_SEARCH =
+    `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/multi_search`;
+
   const OA_EMBED_URL =
     `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/embeddings`;
 
-  // DOM IDs expected in homepage HTML:
-  // #mainSearchForm, #mainSearchInput, #recentBills, #results, #resultsSection, #resultsCount (optional), #aiAnswer (optional)
-
-
-  /* ---------------------------------------------------
-     HELPERS
-  --------------------------------------------------- */
+  /* ---------------- helpers ---------------- */
 
   function waitForjQuery(timeoutMs = 8000) {
     const start = Date.now();
@@ -122,10 +110,7 @@
     if (el) el.textContent = String(n ?? 0);
   }
 
-
-  /* ---------------------------------------------------
-     OPENAI EMBEDDINGS (via Worker)
-  --------------------------------------------------- */
+  /* ---------------- OpenAI embeddings ---------------- */
 
   async function embedQuery(q) {
     const res = await fetch(OA_EMBED_URL, {
@@ -154,18 +139,15 @@
     return vec;
   }
 
-
-  /* ---------------------------------------------------
-     TYPESENSE (via Worker)
-     IMPORTANT: Use POST to avoid URL length limits
-  --------------------------------------------------- */
+  /* ---------------- Typesense recent bills (GET) ---------------- */
 
   async function fetchRecentBills(limit) {
-    const body = {
+    // GET query params (small, safe)
+    const params = new URLSearchParams({
       q: "*",
       query_by: "title",
-      per_page: limit,
-      page: 1,
+      per_page: String(limit),
+      page: "1",
       sort_by: "update_date:desc",
       include_fields: [
         "id",
@@ -181,13 +163,10 @@
         "sponsor_state"
       ].join(","),
       exclude_fields: "embedding"
-    };
-
-    const res = await fetch(TS_SEARCH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
     });
+
+    const url = `${TS_DOCS_SEARCH}?${params.toString()}`;
+    const res = await fetch(url, { method: "GET" });
 
     if (!res.ok) {
       const txt = await res.text().catch(() => "(no body)");
@@ -197,44 +176,50 @@
     return res.json();
   }
 
-  async function hybridSearch({ q, vector, page = 1, perPage = 20, alpha = DEFAULT_ALPHA }) {
-    // Oversample semantic candidates a bit
-    const k = Math.max(60, perPage * 4);
+  /* ---------------- Typesense hybrid search (POST /multi_search) ---------------- */
 
-    // Typesense vector_query format:
-    // embedding:([<floats>], k:<int>, alpha:<0..1>)
+  async function hybridSearchMulti({ q, vector, perPage = 20, page = 1, alpha = DEFAULT_ALPHA }) {
+    // oversample semantic candidates a bit
+    const k = Math.max(80, perPage * 5);
+
     const vectorQuery = `embedding:([${vector.join(",")}], k:${k}, alpha:${alpha})`;
 
+    // multi_search expects searches[]
     const body = {
-      q: q,
-      query_by: "title,ai_summary_text,policy_area,subjects,committees,latest_action_text",
-      per_page: perPage,
-      page: page,
-      sort_by: "_text_match:desc,update_date:desc",
-      vector_query: vectorQuery,
-      rerank_hybrid_matches: true,
-      include_fields: [
-        "id",
-        "title",
-        "type",
-        "number",
-        "congress",
-        "chamber",
-        "update_date",
-        "introduced_date",
-        "ai_summary_text",
-        "policy_area",
-        "subjects",
-        "committees",
-        "sponsor_party",
-        "sponsor_state",
-        "cosponsor_count",
-        "latest_action_text"
-      ].join(","),
-      exclude_fields: "embedding"
+      searches: [
+        {
+          collection: COLLECTION,
+          q: q,
+          query_by: "title,ai_summary_text,policy_area,subjects,committees,latest_action_text",
+          per_page: perPage,
+          page: page,
+          sort_by: "_text_match:desc,update_date:desc",
+          vector_query: vectorQuery,
+          rerank_hybrid_matches: true,
+          include_fields: [
+            "id",
+            "title",
+            "type",
+            "number",
+            "congress",
+            "chamber",
+            "update_date",
+            "introduced_date",
+            "ai_summary_text",
+            "policy_area",
+            "subjects",
+            "committees",
+            "sponsor_party",
+            "sponsor_state",
+            "cosponsor_count",
+            "latest_action_text"
+          ].join(","),
+          exclude_fields: "embedding"
+        }
+      ]
     };
 
-    const res = await fetch(TS_SEARCH_URL, {
+    const res = await fetch(TS_MULTI_SEARCH, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
@@ -245,13 +230,16 @@
       throw new Error(`Search failed HTTP ${res.status}: ${txt}`);
     }
 
-    return res.json();
+    const json = await res.json();
+
+    // multi_search returns { results: [ { hits, found, ... } ] }
+    const first = json?.results?.[0];
+    if (!first) throw new Error("multi_search returned no results[]");
+
+    return first;
   }
 
-
-  /* ---------------------------------------------------
-     RENDER
-  --------------------------------------------------- */
+  /* ---------------- render ---------------- */
 
   function renderRecentBills(json) {
     const $mount = window.jQuery("#recentBills");
@@ -352,10 +340,7 @@
     $mount.html(html);
   }
 
-
-  /* ---------------------------------------------------
-     SEARCH RUNNER
-  --------------------------------------------------- */
+  /* ---------------- run search ---------------- */
 
   async function runSearch(q) {
     const query = String(q || "").trim();
@@ -364,18 +349,17 @@
     showResultsSection();
 
     const $results = window.jQuery("#results");
-    if ($results.length) {
-      $results.html(`<div class="muted">Searching…</div>`);
-    }
+    if ($results.length) $results.html(`<div class="muted">Searching…</div>`);
 
     // 1) embed query
     const vector = await embedQuery(query);
 
-    // 2) hybrid typesense search
-    const json = await hybridSearch({
+    // 2) multi_search hybrid query
+    const json = await hybridSearchMulti({
       q: query,
-      vector: vector,
+      vector,
       perPage: RESULTS_PER_PAGE,
+      page: 1,
       alpha: DEFAULT_ALPHA
     });
 
@@ -383,25 +367,22 @@
     renderResults(json, query);
   }
 
-
-  /* ---------------------------------------------------
-     BOOT
-  --------------------------------------------------- */
+  /* ---------------- boot ---------------- */
 
   async function boot() {
     const $ = await waitForjQuery();
 
-    // Recent bills rail
+    // recent bills
     try {
-      const recentJson = await fetchRecentBills(RECENT_LIMIT);
-      renderRecentBills(recentJson);
+      const recent = await fetchRecentBills(RECENT_LIMIT);
+      renderRecentBills(recent);
     } catch (e) {
-      console.warn("Recent bills failed:", e);
+      console.error("Recent bills failed:", e);
       const $mount = $("#recentBills");
       if ($mount.length) $mount.html(`<div class="muted">Could not load recent bills.</div>`);
     }
 
-    // Bind main search
+    // bind search
     const $form = $("#mainSearchForm");
     const $input = $("#mainSearchInput");
 
@@ -413,14 +394,12 @@
         } catch (e) {
           console.error(e);
           showResultsSection();
-          $("#results").html(`<div class="muted">Search failed. Check the console.</div>`);
+          $("#results").html(`<div class="muted">Search failed. Check console.</div>`);
         }
       });
-    } else {
-      console.warn("Search form/input not found. Expected #mainSearchForm and #mainSearchInput.");
     }
 
-    // Auto-run if ?q=
+    // auto-run ?q=
     const qParam = getParam("q");
     if (qParam && $input.length) {
       $input.val(qParam);
@@ -432,8 +411,6 @@
     }
   }
 
-  // Prefer your global helper if present (from app.js)
   if (window.onReady) window.onReady(boot);
   else document.addEventListener("DOMContentLoaded", boot);
-
 })();
