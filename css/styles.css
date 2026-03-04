@@ -1,0 +1,481 @@
+/* ---------------------------------------------------
+   GOOGLE FONTS
+--------------------------------------------------- */
+
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&family=Libre+Baskerville:wght@400;700&display=swap');
+
+
+/* ---------------------------------------------------
+   ROOT DESIGN TOKENS
+--------------------------------------------------- */
+
+:root {
+
+  --font-sans: "Open Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-serif: "Libre Baskerville", Georgia, serif;
+
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+
+  --color-text: #1c1c1c;
+  --color-muted: #6c6c6c;
+
+  --color-border: #e5e7eb;
+
+  --color-primary: #1a73e8;
+  --color-primary-hover: #1557b0;
+
+  --color-shadow: rgba(0,0,0,.06);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --container: 1100px;
+
+}
+
+
+
+/* ---------------------------------------------------
+   GLOBAL RESET
+--------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-bg);
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img {
+  max-width: 100%;
+}
+
+
+
+/* ---------------------------------------------------
+   LAYOUT
+--------------------------------------------------- */
+
+.container {
+
+  max-width: var(--container);
+  margin: auto;
+  padding-left: 24px;
+  padding-right: 24px;
+
+}
+
+.main {
+  padding-bottom: 80px;
+}
+
+
+
+/* ---------------------------------------------------
+   TOPBAR
+--------------------------------------------------- */
+
+.topbar {
+
+  background: white;
+  border-bottom: 1px solid var(--color-border);
+
+}
+
+.topbar__inner {
+
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+}
+
+.brand {
+
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  font-weight: 600;
+  font-size: 18px;
+
+}
+
+.brand__mark {
+
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: var(--color-primary);
+
+}
+
+.topbar__nav {
+
+  display: flex;
+  gap: 24px;
+
+}
+
+.topbar__link {
+
+  font-size: 15px;
+  color: var(--color-muted);
+
+}
+
+.topbar__link.is-active {
+  color: var(--color-text);
+}
+
+
+
+/* ---------------------------------------------------
+   HERO SEARCH
+--------------------------------------------------- */
+
+.hero {
+
+  padding-top: 80px;
+  padding-bottom: 60px;
+
+}
+
+.hero__inner {
+
+  text-align: center;
+  max-width: 720px;
+  margin: auto;
+
+}
+
+.hero__title {
+
+  font-family: var(--font-serif);
+  font-size: 42px;
+  margin-bottom: 16px;
+
+}
+
+.hero__subtitle {
+
+  color: var(--color-muted);
+  margin-bottom: 36px;
+
+}
+
+
+
+/* ---------------------------------------------------
+   SEARCH BAR
+--------------------------------------------------- */
+
+.search__bar {
+
+  display: flex;
+  background: white;
+
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+
+  box-shadow: 0 4px 16px var(--color-shadow);
+
+  overflow: hidden;
+
+}
+
+.search__input {
+
+  flex: 1;
+  border: none;
+  padding: 18px 20px;
+
+  font-size: 17px;
+  outline: none;
+
+}
+
+.search__btn {
+
+  background: var(--color-primary);
+  color: white;
+
+  border: none;
+  padding: 0 28px;
+
+  font-weight: 600;
+  cursor: pointer;
+
+}
+
+.search__btn:hover {
+  background: var(--color-primary-hover);
+}
+
+
+
+/* ---------------------------------------------------
+   SECTION HEADERS
+--------------------------------------------------- */
+
+.section {
+
+  margin-top: 40px;
+
+}
+
+.section__header {
+
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  margin-bottom: 18px;
+
+}
+
+.section__title {
+
+  font-size: 20px;
+  font-weight: 600;
+
+}
+
+
+
+/* ---------------------------------------------------
+   CARD RAIL
+--------------------------------------------------- */
+
+.rail {
+
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+
+}
+
+.rail::-webkit-scrollbar {
+  display: none;
+}
+
+
+
+/* ---------------------------------------------------
+   BILL CARD
+--------------------------------------------------- */
+
+.billcard {
+
+  position: relative;
+
+  min-width: 260px;
+  max-width: 260px;
+
+  padding: 20px;
+
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+
+  border: 1px solid var(--color-border);
+
+  box-shadow: 0 6px 20px var(--color-shadow);
+
+  transition: transform .15s ease, box-shadow .15s ease;
+
+}
+
+.billcard:hover {
+
+  transform: translateY(-3px);
+  box-shadow: 0 10px 26px rgba(0,0,0,.08);
+
+}
+
+
+
+/* ---------------------------------------------------
+   BILL CARD CONTENT
+--------------------------------------------------- */
+
+.billcard__id {
+
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+
+}
+
+.billcard__status {
+
+  font-size: 13px;
+  color: var(--color-muted);
+
+}
+
+.billcard__title {
+
+  margin-top: 12px;
+  margin-bottom: 18px;
+
+  font-weight: 600;
+  line-height: 1.4;
+
+}
+
+.billcard__committee {
+
+  font-size: 13px;
+  color: var(--color-muted);
+
+}
+
+.billcard__date {
+
+  font-size: 12px;
+  color: var(--color-muted);
+
+}
+
+
+
+/* ---------------------------------------------------
+   PARTY DOT
+--------------------------------------------------- */
+
+.party-dot {
+
+  position: absolute;
+  top: 14px;
+  right: 14px;
+
+  width: 10px;
+  height: 10px;
+
+  border-radius: 50%;
+
+}
+
+.party-dot--d {
+  background: #2563eb;
+}
+
+.party-dot--r {
+  background: #dc2626;
+}
+
+.party-dot--i {
+  background: #7c3aed;
+}
+
+.party-dot--u {
+  background: #9ca3af;
+}
+
+
+
+/* ---------------------------------------------------
+   RESULTS LAYOUT
+--------------------------------------------------- */
+
+.results {
+
+  display: grid;
+  grid-template-columns: 260px 1fr 320px;
+  gap: 28px;
+
+}
+
+
+
+/* ---------------------------------------------------
+   PANELS
+--------------------------------------------------- */
+
+.panel {
+
+  background: white;
+  border-radius: var(--radius-md);
+
+  border: 1px solid var(--color-border);
+
+  padding: 20px;
+
+}
+
+.panel__title {
+
+  font-weight: 600;
+  margin-bottom: 12px;
+
+}
+
+
+
+/* ---------------------------------------------------
+   FOOTER
+--------------------------------------------------- */
+
+.footer {
+
+  border-top: 1px solid var(--color-border);
+  padding: 30px 0;
+
+  margin-top: 60px;
+
+}
+
+.footer__inner {
+
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+}
+
+.footer__links {
+  display: flex;
+  gap: 16px;
+}
+
+.footer__link {
+  color: var(--color-muted);
+}
+
+
+
+/* ---------------------------------------------------
+   RESPONSIVE
+--------------------------------------------------- */
+
+@media (max-width: 900px) {
+
+  .hero__title {
+    font-size: 34px;
+  }
+
+  .results {
+    grid-template-columns: 1fr;
+  }
+
+}
