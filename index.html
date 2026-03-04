@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Congress Bill Search</title>
+
+  <!-- Fonts (optional): keep it system-first for Apple feel -->
+  <meta name="color-scheme" content="light dark" />
+</head>
+
+<body>
+  <!-- Top chrome -->
+  <header class="topbar">
+    <div class="container topbar__inner">
+      <a class="brand" href="./index.html" aria-label="Home">
+        <span class="brand__mark"></span>
+        <span class="brand__text">Congress Bill Search</span>
+      </a>
+
+      <nav class="topbar__nav" aria-label="Primary">
+        <a href="./index.html" class="topbar__link is-active">Search</a>
+        <a href="./committee.html" class="topbar__link">Committees</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- Hero search -->
+    <section class="hero">
+      <div class="container hero__inner">
+        <h1 class="hero__title">Search for a bill or ask a question</h1>
+        <p class="hero__subtitle">
+          Find legislation by keywords, sponsor, committee, topic, or ask a plain-English question.
+        </p>
+
+        <!-- Search bar -->
+        <form class="search" id="searchForm" role="search" aria-label="Bill search">
+          <div class="search__bar">
+            <span class="search__icon" aria-hidden="true"></span>
+            <input
+              class="search__input"
+              id="q"
+              name="q"
+              type="search"
+              autocomplete="off"
+              placeholder="e.g., wildfire mitigation grants, HR 123, aviation safety…"
+            />
+            <button class="search__btn" type="submit">Search</button>
+          </div>
+
+          <!-- Optional quick filters row (we can wire these later) -->
+          <div class="search__filters" aria-label="Quick filters">
+            <button type="button" class="chip" data-filter="chamber:House">House</button>
+            <button type="button" class="chip" data-filter="chamber:Senate">Senate</button>
+            <button type="button" class="chip" data-filter="status:Introduced">Introduced</button>
+            <button type="button" class="chip" data-filter="status:Passed">Passed</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Recent bills rail -->
+    <section class="section">
+      <div class="container section__header">
+        <h2 class="section__title">Most recent bills</h2>
+        <div class="section__actions">
+          <button class="iconbtn" type="button" aria-label="Scroll left" data-carousel="prev">‹</button>
+          <button class="iconbtn" type="button" aria-label="Scroll right" data-carousel="next">›</button>
+        </div>
+      </div>
+
+      <div class="container">
+        <!-- Horizontal card slider -->
+        <div class="rail" id="recentRail" aria-label="Recent bills" role="region">
+          <!-- Card template (repeat 12) -->
+          <a class="billcard" href="./bill.html?id=119-hr-123">
+            <!-- Sponsor party dot: red / blue / purple / gray -->
+            <span class="party-dot party-dot--r" title="Sponsor: Republican" aria-label="Sponsor party Republican"></span>
+
+            <div class="billcard__meta">
+              <div class="billcard__id">H.R. 123</div>
+              <div class="billcard__status">Introduced</div>
+            </div>
+
+            <div class="billcard__title">
+              A bill to improve wildfire mitigation programs and support county resilience initiatives…
+            </div>
+
+            <div class="billcard__footer">
+              <div class="billcard__committee" title="Committee">
+                House Committee on Transportation and Infrastructure
+              </div>
+              <div class="billcard__date" title="Latest action date">
+                Updated Feb 12, 2026
+              </div>
+            </div>
+          </a>
+
+          <!-- Repeat cards... -->
+        </div>
+
+        <!-- Subtle hint for mouse users -->
+        <div class="rail-hint">Scroll horizontally to browse</div>
+      </div>
+    </section>
+
+    <!-- Results area (below the fold, populated after search) -->
+    <section class="section section--results" id="resultsSection" hidden>
+      <div class="container section__header">
+        <h2 class="section__title">Results</h2>
+        <div class="section__sub">
+          <span id="resultsCount">0</span> matches
+        </div>
+      </div>
+
+      <div class="container results">
+        <!-- Left rail (facets) -->
+        <aside class="results__filters" aria-label="Filters">
+          <div class="panel">
+            <div class="panel__title">Filter</div>
+            <div class="panel__body" id="filtersMount">
+              <!-- Facets mount here -->
+            </div>
+          </div>
+        </aside>
+
+        <!-- Main results list -->
+        <div class="results__list" aria-label="Search results">
+          <div class="panel">
+            <div class="panel__body" id="resultsMount">
+              <!-- Results mount here -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Right rail (AI answer) -->
+        <aside class="results__answer" aria-label="Answer">
+          <div class="panel">
+            <div class="panel__title">Answer</div>
+            <div class="panel__body" id="answerMount">
+              <!-- AI answer mount here -->
+              <div class="muted">Ask a question above to get a plain-English answer.</div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer__inner">
+      <div class="muted">Demo: Congress.gov + OpenAI + Typesense</div>
+      <div class="footer__links">
+        <a href="#" class="footer__link">About</a>
+        <a href="#" class="footer__link">Privacy</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- JS hooks (we’ll add later) -->
+  <script>
+    // Placeholder: wire Typesense recent bills + search handlers here later
+  </script>
+</body>
+</html>
