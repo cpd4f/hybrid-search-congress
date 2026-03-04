@@ -1,12 +1,55 @@
 /* ---------------------------------------------------
-   AI SEARCH (OpenAI embeddings + Typesense hybrid search)
-   No Pinecone
+   AI SEARCH (Typesense hybrid vector search via Workers)
+   - No Pinecone
+   - Query embeddings from OpenAI Worker
+   - Hybrid search in Typesense via vector_query
 --------------------------------------------------- */
 
 (function () {
   "use strict";
 
-  // ---------- tiny helpers ----------
+  // ---------- CONFIG ----------
+  // Your Workers:
+  const TYPESENSE_WORKER_BASE = "https://typesense-proxy-worker.colemandavis4.workers.dev";
+  const OPENAI_WORKER_BASE = "https://openai-proxy-worker.colemandavis4.workers.dev";
+
+  // Typesense collection name (fallback to APP_CONFIG if present)
+  const COLLECTION =
+    (window.APP_CONFIG && window.APP_CONFIG.TYPESENSE_INDEX) ||
+    "congress_bills";
+
+  // Models
+  const EMBED_MODEL =
+    (window.APP_CONFIG && window.APP_CONFIG.OPENAI_EMBED_MODEL) ||
+    "text-embedding-3-large";
+
+  // Search defaults
+  const RECENT_LIMIT =
+    (window.APP_CONFIG && window.APP_CONFIG.RECENT_BILLS_LIMIT) ||
+    12;
+
+  const RESULTS_PER_PAGE =
+    (window.APP_CONFIG && window.APP_CONFIG.RESULTS_PER_PAGE) ||
+    20;
+
+  // Hybrid weighting: 0..1 (higher = more semantic)
+  const DEFAULT_ALPHA =
+    (window.APP_CONFIG && window.APP_CONFIG.HYBRID_ALPHA) ||
+    0.65;
+
+  // Embedding dims must match collection schema
+  const EXPECTED_EMBED_DIMS = 3072;
+
+  // Endpoints (Worker routes)
+  const TS_SEARCH_URL =
+    `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
+
+  // OpenAI worker should expose /embeddings (maps to /v1/embeddings upstream)
+  const OA_EMBED_URL =
+    `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/embeddings`;
+
+
+  // ---------- jQuery ready helper ----------
   function waitForjQuery(timeoutMs = 8000) {
     const start = Date.now();
     return new Promise((resolve, reject) => {
@@ -18,6 +61,7 @@
     });
   }
 
+  // ---------- utils ----------
   function escHtml(s) {
     return String(s ?? "")
       .replace(/&/g, "&amp;")
@@ -34,28 +78,39 @@
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   }
 
-  function sponsorDot(party) {
+  function sponsorDotClass(party) {
     const p = String(party || "").toUpperCase();
-    if (p === "R") return "dot dot--r";
-    if (p === "D") return "dot dot--d";
-    return "dot dot--u";
+    if (p === "R") return "party-dot party-dot--r";
+    if (p === "D") return "party-dot party-dot--d";
+    if (p === "I") return "party-dot party-dot--i";
+    return "party-dot party-dot--u";
   }
 
-  // ---------- endpoints ----------
-  const COLLECTION = (window.APP_CONFIG && APP_CONFIG.TYPESENSE_INDEX) || "congress_bills";
+  function firstCommittee(committees) {
+    if (!Array.isArray(committees) || !committees.length) return "";
+    return String(committees[0] || "");
+  }
 
-  // Your app.js defines these:
-  // API.TYPESENSE, API.OPENAI
-  const TS_SEARCH_URL = `${window.API?.TYPESENSE}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
-  const OA_EMBED_URL = `${window.API?.OPENAI}/embeddings`;
+  function billShortId(doc) {
+    const t = String(doc?.type || "").toUpperCase();
+    const n = String(doc?.number || "");
+    if (!t || !n) return "";
+    return `${t} ${n}`;
+  }
 
-  // ---------- OpenAI: embed query ----------
+  function getParam(name) {
+    const u = new URL(window.location.href);
+    return u.searchParams.get(name);
+  }
+
+  // ---------- OpenAI embeddings via worker ----------
   async function embedQuery(q) {
     const res = await fetch(OA_EMBED_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // Matches OpenAI embeddings API body
       body: JSON.stringify({
-        model: "text-embedding-3-large",
+        model: EMBED_MODEL,
         input: q,
         encoding_format: "float"
       })
@@ -70,14 +125,18 @@
     const vec = json?.data?.[0]?.embedding;
 
     if (!Array.isArray(vec)) throw new Error("Embeddings response missing embedding[]");
+    if (vec.length !== EXPECTED_EMBED_DIMS) {
+      throw new Error(`Embedding dim mismatch: got ${vec.length}, expected ${EXPECTED_EMBED_DIMS}`);
+    }
+
     return vec;
   }
 
-  // ---------- Typesense: recent bills ----------
-  async function fetchRecentBills(limit = 12) {
+  // ---------- Typesense recent bills ----------
+  async function fetchRecentBills(limit) {
     const params = new URLSearchParams({
       q: "*",
-      query_by: "title", // minimal, since q="*"
+      query_by: "title",
       per_page: String(limit),
       page: "1",
       sort_by: "update_date:desc",
@@ -86,8 +145,8 @@
         "title",
         "type",
         "number",
-        "congress",
         "chamber",
+        "congress",
         "update_date",
         "latest_action_text",
         "committees",
@@ -102,27 +161,31 @@
 
     if (!res.ok) {
       const txt = await res.text().catch(() => "(no body)");
-      throw new Error(`Typesense recent bills failed HTTP ${res.status}: ${txt}`);
+      throw new Error(`Recent bills failed HTTP ${res.status}: ${txt}`);
     }
 
     return res.json();
   }
 
-  // ---------- Typesense: hybrid search (keyword + vector) ----------
-  async function hybridSearch({ q, vector, page = 1, perPage = 20, alpha = 0.65 }) {
-    // NOTE:
-    // vector_query syntax and alpha are defined by Typesense docs. :contentReference[oaicite:4]{index=4}
-    const vectorQuery = `embedding:([${vector.join(",")}], k:${Math.max(50, perPage * 3)}, alpha:${alpha})`;
+  // ---------- Typesense hybrid search ----------
+  async function hybridSearch({ q, vector, page = 1, perPage = 20, alpha = DEFAULT_ALPHA }) {
+    // k: how many semantic candidates to consider (oversample a bit)
+    const k = Math.max(60, perPage * 4);
+
+    // Typesense vector_query format: field:([..], k:.., alpha:..)
+    // Note: the exact supported parameters depend on your Typesense version/config.
+    const vectorQuery = `embedding:([${vector.join(",")}], k:${k}, alpha:${alpha})`;
 
     const params = new URLSearchParams({
       q: q,
       query_by: "title,ai_summary_text,policy_area,subjects,committees,latest_action_text",
       per_page: String(perPage),
       page: String(page),
+      // Keep a predictable sort fallback
       sort_by: "_text_match:desc,update_date:desc",
       vector_query: vectorQuery,
+      // Helpful for blended results
       rerank_hybrid_matches: "true",
-      drop_tokens_threshold: "0",
       include_fields: [
         "id",
         "title",
@@ -149,141 +212,149 @@
 
     if (!res.ok) {
       const txt = await res.text().catch(() => "(no body)");
-      throw new Error(`Typesense search failed HTTP ${res.status}: ${txt}`);
+      throw new Error(`Search failed HTTP ${res.status}: ${txt}`);
     }
 
     return res.json();
   }
 
-  // ---------- render: recent bills ----------
+  // ---------- render: recent bills rail ----------
   function renderRecentBills(json) {
-    const $wrap = window.jQuery("#recentBills");
-    if (!$wrap.length) return;
+    const $mount = window.jQuery("#recentBills");
+    if (!$mount.length) return;
 
     const hits = json?.hits || [];
     if (!hits.length) {
-      $wrap.html(`<div class="muted">No bills found yet.</div>`);
+      $mount.html(`<div class="muted">No recent bills found.</div>`);
       return;
     }
 
-    const cards = hits
-      .map((h) => h.document)
-      .map((d) => {
-        const committee = Array.isArray(d.committees) && d.committees.length ? d.committees[0] : "";
+    const html = hits
+      .map(h => h.document)
+      .map(d => {
+        const committee = firstCommittee(d.committees);
         const updated = epochToDate(d.update_date);
-        const partyClass = sponsorDot(d.sponsor_party);
-        const billLabel = `${escHtml(String(d.type || "").toUpperCase())} ${escHtml(String(d.number || ""))}`;
+        const dot = sponsorDotClass(d.sponsor_party);
 
         return `
-          <a class="bill-card" href="./bill.html?id=${encodeURIComponent(d.id)}">
-            <span class="${partyClass}" aria-hidden="true"></span>
-            <div class="bill-card__kicker">${billLabel} • ${escHtml(String(d.chamber || ""))}</div>
-            <div class="bill-card__title">${escHtml(d.title)}</div>
-            <div class="bill-card__meta">
-              <span>${escHtml(committee || "Committee TBD")}</span>
-              <span>Updated ${escHtml(updated || "")}</span>
+          <a class="billcard" href="./bill.html?id=${encodeURIComponent(d.id)}">
+            <span class="${dot}" aria-hidden="true"></span>
+
+            <div class="billcard__meta">
+              <div class="billcard__id">${escHtml(billShortId(d))}</div>
+              <div class="billcard__status">${escHtml(d.chamber || "")}${d.congress ? " • " + escHtml(String(d.congress)) + "th" : ""}</div>
+            </div>
+
+            <div class="billcard__title">${escHtml(d.title || "")}</div>
+
+            <div class="billcard__footer">
+              <div class="billcard__committee">${escHtml(committee || "Committee TBD")}</div>
+              <div class="billcard__date">${updated ? "Updated " + escHtml(updated) : ""}</div>
             </div>
           </a>
         `;
       })
       .join("");
 
-    $wrap.html(`<div class="bill-rail">${cards}</div>`);
+    // Your CSS already expects a flex rail, so just inject cards
+    $mount.html(html);
   }
 
-  // ---------- render: search results ----------
+  // ---------- render: results list ----------
   function renderResults(json, q) {
-    const $wrap = window.jQuery("#results");
-    if (!$wrap.length) return;
+    const $mount = window.jQuery("#results");
+    if (!$mount.length) return;
 
-    const hits = json?.hits || [];
     const found = json?.found ?? 0;
+    const hits = json?.hits || [];
+
+    const $count = window.jQuery("#resultsCount");
+    if ($count.length) $count.text(found);
 
     if (!hits.length) {
-      $wrap.html(`<div class="muted">No results for “${escHtml(q)}”.</div>`);
+      $mount.html(`<div class="muted">No results for “${escHtml(q)}”.</div>`);
       return;
     }
 
-    const items = hits
-      .map((h) => h.document)
-      .map((d) => {
-        const billLabel = `${escHtml(String(d.type || "").toUpperCase())} ${escHtml(String(d.number || ""))} • ${escHtml(
-          String(d.chamber || "")
-        )} • ${escHtml(String(d.congress || ""))}th Congress`;
-
+    const html = hits
+      .map(h => h.document)
+      .map(d => {
+        const dot = sponsorDotClass(d.sponsor_party);
         const updated = epochToDate(d.update_date);
-        const summary = d.ai_summary_text ? escHtml(d.ai_summary_text) : "";
-
-        const committee = Array.isArray(d.committees) && d.committees.length ? d.committees.slice(0, 2).join(", ") : "";
-        const policy = d.policy_area ? escHtml(d.policy_area) : "";
-        const partyClass = sponsorDot(d.sponsor_party);
+        const committee = Array.isArray(d.committees) ? d.committees.slice(0, 2).join(", ") : "";
+        const policy = d.policy_area ? String(d.policy_area) : "";
+        const summary = d.ai_summary_text ? String(d.ai_summary_text) : "";
 
         return `
-          <div class="result">
-            <div class="result__top">
-              <span class="${partyClass}" aria-hidden="true"></span>
-              <div class="result__kicker">${billLabel}</div>
-              <div class="result__date">${escHtml(updated || "")}</div>
+          <div class="panel" style="margin-bottom:16px;">
+            <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span class="${dot}" aria-hidden="true"></span>
+                <div style="font-weight:600;font-size:14px;">
+                  ${escHtml(billShortId(d))}${d.chamber ? " • " + escHtml(d.chamber) : ""}${d.congress ? " • " + escHtml(String(d.congress)) + "th Congress" : ""}
+                </div>
+              </div>
+              <div style="font-size:12px;color:var(--color-muted);">
+                ${updated ? escHtml(updated) : ""}
+              </div>
             </div>
 
-            <a class="result__title" href="./bill.html?id=${encodeURIComponent(d.id)}">${escHtml(d.title)}</a>
+            <div style="margin-top:10px;">
+              <a href="./bill.html?id=${encodeURIComponent(d.id)}" style="font-weight:700;font-size:18px;line-height:1.35;display:inline-block;">
+                ${escHtml(d.title || "")}
+              </a>
+            </div>
 
-            ${summary ? `<div class="result__summary">${summary}</div>` : ""}
+            ${summary ? `<div style="margin-top:10px;color:var(--color-muted);line-height:1.45;">${escHtml(summary)}</div>` : ""}
 
-            <div class="result__meta">
-              ${policy ? `<span class="pill">${policy}</span>` : ""}
-              ${committee ? `<span class="pill">${escHtml(committee)}</span>` : ""}
-              ${d.sponsor_party ? `<span class="pill">${escHtml(d.sponsor_party)}-${escHtml(d.sponsor_state || "")}</span>` : ""}
+            <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;">
+              ${policy ? `<span class="chip">${escHtml(policy)}</span>` : ""}
+              ${committee ? `<span class="chip">${escHtml(committee)}</span>` : ""}
+              ${d.sponsor_party ? `<span class="chip">${escHtml(String(d.sponsor_party))}${d.sponsor_state ? "-" + escHtml(String(d.sponsor_state)) : ""}</span>` : ""}
+              ${Number.isFinite(d.cosponsor_count) ? `<span class="chip">${escHtml(String(d.cosponsor_count))} cosponsors</span>` : ""}
             </div>
           </div>
         `;
       })
       .join("");
 
-    $wrap.html(`
-      <div class="results-header">
-        <div class="results-header__count">${found.toLocaleString()} results</div>
-      </div>
-      <div class="results-list">${items}</div>
-    `);
+    $mount.html(html);
   }
 
-  // ---------- main search ----------
+  // ---------- search runner ----------
   async function runSearch(q) {
-    const trimmed = String(q || "").trim();
-    if (!trimmed) return;
+    const query = String(q || "").trim();
+    if (!query) return;
 
     const $results = window.jQuery("#results");
     if ($results.length) $results.html(`<div class="muted">Searching…</div>`);
 
-    // Query embedding (we keep it simple for the demo: embed the raw query)
-    // If you want, we can port over your “enriched vs raw blending” next.
-    const vector = await embedQuery(trimmed);
-
-    // Hybrid search (vector + keyword)
+    const vector = await embedQuery(query);
     const json = await hybridSearch({
-      q: trimmed,
+      q: query,
       vector,
-      perPage: (window.APP_CONFIG && APP_CONFIG.RESULTS_PER_PAGE) || 20,
-      alpha: 0.65
+      perPage: RESULTS_PER_PAGE,
+      alpha: DEFAULT_ALPHA
     });
 
-    renderResults(json, trimmed);
+    renderResults(json, query);
   }
 
   // ---------- boot ----------
   async function boot() {
     const $ = await waitForjQuery();
 
-    // Load recent bills rail
+    // Recent bills rail
     try {
-      const recent = await fetchRecentBills((window.APP_CONFIG && APP_CONFIG.RECENT_BILLS_LIMIT) || 12);
-      renderRecentBills(recent);
+      const recentJson = await fetchRecentBills(RECENT_LIMIT);
+      renderRecentBills(recentJson);
     } catch (e) {
       console.warn("Recent bills failed:", e);
+      const $mount = $("#recentBills");
+      if ($mount.length) $mount.html(`<div class="muted">Could not load recent bills.</div>`);
     }
 
-    // Bind form
+    // Bind main search
     const $form = $("#mainSearchForm");
     const $input = $("#mainSearchInput");
 
@@ -294,13 +365,13 @@
           await runSearch($input.val());
         } catch (e) {
           console.error(e);
-          $("#results").html(`<div class="muted">Search failed. Check console for details.</div>`);
+          $("#results").html(`<div class="muted">Search failed. Check the console.</div>`);
         }
       });
     }
 
-    // Optional: auto-run if ?q=
-    const qParam = window.utils?.getParam?.("q");
+    // Auto-run if ?q=
+    const qParam = getParam("q");
     if (qParam && $input.length) {
       $input.val(qParam);
       try {
@@ -311,7 +382,6 @@
     }
   }
 
-  // Use your global helper from app.js
   if (window.onReady) window.onReady(boot);
   else document.addEventListener("DOMContentLoaded", boot);
 })();
