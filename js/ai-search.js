@@ -3,12 +3,16 @@
    - No Pinecone
    - Query embeddings from OpenAI Worker
    - Hybrid search in Typesense via vector_query
+   - Uses POST to Typesense search endpoint (avoids URL length limits)
 --------------------------------------------------- */
 
 (function () {
   "use strict";
 
-  // ---------- CONFIG ----------
+  /* ---------------------------------------------------
+     CONFIG
+  --------------------------------------------------- */
+
   // Your Workers:
   const TYPESENSE_WORKER_BASE = "https://typesense-proxy-worker.colemandavis4.workers.dev";
   const OPENAI_WORKER_BASE = "https://openai-proxy-worker.colemandavis4.workers.dev";
@@ -18,7 +22,7 @@
     (window.APP_CONFIG && window.APP_CONFIG.TYPESENSE_INDEX) ||
     "congress_bills";
 
-  // Models
+  // Embeddings model
   const EMBED_MODEL =
     (window.APP_CONFIG && window.APP_CONFIG.OPENAI_EMBED_MODEL) ||
     "text-embedding-3-large";
@@ -37,10 +41,10 @@
     (window.APP_CONFIG && window.APP_CONFIG.HYBRID_ALPHA) ||
     0.65;
 
-  // Embedding dims must match collection schema
+  // Embedding dims must match your Typesense schema
   const EXPECTED_EMBED_DIMS = 3072;
 
-  // Endpoints (Worker routes)
+  // Endpoints
   const TS_SEARCH_URL =
     `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
 
@@ -48,8 +52,14 @@
   const OA_EMBED_URL =
     `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/embeddings`;
 
+  // DOM IDs expected in homepage HTML:
+  // #mainSearchForm, #mainSearchInput, #recentBills, #results, #resultsSection, #resultsCount (optional), #aiAnswer (optional)
 
-  // ---------- jQuery ready helper ----------
+
+  /* ---------------------------------------------------
+     HELPERS
+  --------------------------------------------------- */
+
   function waitForjQuery(timeoutMs = 8000) {
     const start = Date.now();
     return new Promise((resolve, reject) => {
@@ -61,7 +71,6 @@
     });
   }
 
-  // ---------- utils ----------
   function escHtml(s) {
     return String(s ?? "")
       .replace(/&/g, "&amp;")
@@ -103,12 +112,25 @@
     return u.searchParams.get(name);
   }
 
-  // ---------- OpenAI embeddings via worker ----------
+  function showResultsSection() {
+    const section = document.getElementById("resultsSection");
+    if (section && section.hasAttribute("hidden")) section.removeAttribute("hidden");
+  }
+
+  function setResultsCount(n) {
+    const el = document.getElementById("resultsCount");
+    if (el) el.textContent = String(n ?? 0);
+  }
+
+
+  /* ---------------------------------------------------
+     OPENAI EMBEDDINGS (via Worker)
+  --------------------------------------------------- */
+
   async function embedQuery(q) {
     const res = await fetch(OA_EMBED_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // Matches OpenAI embeddings API body
       body: JSON.stringify({
         model: EMBED_MODEL,
         input: q,
@@ -132,13 +154,18 @@
     return vec;
   }
 
-  // ---------- Typesense recent bills ----------
+
+  /* ---------------------------------------------------
+     TYPESENSE (via Worker)
+     IMPORTANT: Use POST to avoid URL length limits
+  --------------------------------------------------- */
+
   async function fetchRecentBills(limit) {
-    const params = new URLSearchParams({
+    const body = {
       q: "*",
       query_by: "title",
-      per_page: String(limit),
-      page: "1",
+      per_page: limit,
+      page: 1,
       sort_by: "update_date:desc",
       include_fields: [
         "id",
@@ -154,10 +181,13 @@
         "sponsor_state"
       ].join(","),
       exclude_fields: "embedding"
-    });
+    };
 
-    const url = `${TS_SEARCH_URL}?${params.toString()}`;
-    const res = await fetch(url, { method: "GET" });
+    const res = await fetch(TS_SEARCH_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
 
     if (!res.ok) {
       const txt = await res.text().catch(() => "(no body)");
@@ -167,25 +197,22 @@
     return res.json();
   }
 
-  // ---------- Typesense hybrid search ----------
   async function hybridSearch({ q, vector, page = 1, perPage = 20, alpha = DEFAULT_ALPHA }) {
-    // k: how many semantic candidates to consider (oversample a bit)
+    // Oversample semantic candidates a bit
     const k = Math.max(60, perPage * 4);
 
-    // Typesense vector_query format: field:([..], k:.., alpha:..)
-    // Note: the exact supported parameters depend on your Typesense version/config.
+    // Typesense vector_query format:
+    // embedding:([<floats>], k:<int>, alpha:<0..1>)
     const vectorQuery = `embedding:([${vector.join(",")}], k:${k}, alpha:${alpha})`;
 
-    const params = new URLSearchParams({
+    const body = {
       q: q,
       query_by: "title,ai_summary_text,policy_area,subjects,committees,latest_action_text",
-      per_page: String(perPage),
-      page: String(page),
-      // Keep a predictable sort fallback
+      per_page: perPage,
+      page: page,
       sort_by: "_text_match:desc,update_date:desc",
       vector_query: vectorQuery,
-      // Helpful for blended results
-      rerank_hybrid_matches: "true",
+      rerank_hybrid_matches: true,
       include_fields: [
         "id",
         "title",
@@ -205,10 +232,13 @@
         "latest_action_text"
       ].join(","),
       exclude_fields: "embedding"
-    });
+    };
 
-    const url = `${TS_SEARCH_URL}?${params.toString()}`;
-    const res = await fetch(url, { method: "GET" });
+    const res = await fetch(TS_SEARCH_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
 
     if (!res.ok) {
       const txt = await res.text().catch(() => "(no body)");
@@ -218,7 +248,11 @@
     return res.json();
   }
 
-  // ---------- render: recent bills rail ----------
+
+  /* ---------------------------------------------------
+     RENDER
+  --------------------------------------------------- */
+
   function renderRecentBills(json) {
     const $mount = window.jQuery("#recentBills");
     if (!$mount.length) return;
@@ -256,11 +290,9 @@
       })
       .join("");
 
-    // Your CSS already expects a flex rail, so just inject cards
     $mount.html(html);
   }
 
-  // ---------- render: results list ----------
   function renderResults(json, q) {
     const $mount = window.jQuery("#results");
     if (!$mount.length) return;
@@ -268,8 +300,7 @@
     const found = json?.found ?? 0;
     const hits = json?.hits || [];
 
-    const $count = window.jQuery("#resultsCount");
-    if ($count.length) $count.text(found);
+    setResultsCount(found);
 
     if (!hits.length) {
       $mount.html(`<div class="muted">No results for “${escHtml(q)}”.</div>`);
@@ -321,26 +352,42 @@
     $mount.html(html);
   }
 
-  // ---------- search runner ----------
+
+  /* ---------------------------------------------------
+     SEARCH RUNNER
+  --------------------------------------------------- */
+
   async function runSearch(q) {
     const query = String(q || "").trim();
     if (!query) return;
 
-    const $results = window.jQuery("#results");
-    if ($results.length) $results.html(`<div class="muted">Searching…</div>`);
+    showResultsSection();
 
+    const $results = window.jQuery("#results");
+    if ($results.length) {
+      $results.html(`<div class="muted">Searching…</div>`);
+    }
+
+    // 1) embed query
     const vector = await embedQuery(query);
+
+    // 2) hybrid typesense search
     const json = await hybridSearch({
       q: query,
-      vector,
+      vector: vector,
       perPage: RESULTS_PER_PAGE,
       alpha: DEFAULT_ALPHA
     });
 
+    // 3) render
     renderResults(json, query);
   }
 
-  // ---------- boot ----------
+
+  /* ---------------------------------------------------
+     BOOT
+  --------------------------------------------------- */
+
   async function boot() {
     const $ = await waitForjQuery();
 
@@ -365,9 +412,12 @@
           await runSearch($input.val());
         } catch (e) {
           console.error(e);
+          showResultsSection();
           $("#results").html(`<div class="muted">Search failed. Check the console.</div>`);
         }
       });
+    } else {
+      console.warn("Search form/input not found. Expected #mainSearchForm and #mainSearchInput.");
     }
 
     // Auto-run if ?q=
@@ -382,6 +432,8 @@
     }
   }
 
+  // Prefer your global helper if present (from app.js)
   if (window.onReady) window.onReady(boot);
   else document.addEventListener("DOMContentLoaded", boot);
+
 })();
