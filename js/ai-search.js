@@ -416,39 +416,77 @@
     `;
   }
 
-  function renderAnswerLoading(message) {
-    ensureAnswerUI();
-    const body = document.getElementById("aiAnswerBody");
-    if (body) body.innerHTML = `<div class="muted">${escHtml(message || "Generating answer…")}</div>`;
-    const links = document.getElementById("aiSourcesLinks");
-    if (links) links.innerHTML = "";
+function renderAnswerLoading(message) {
+  ensureAnswerUI();
+
+  const body = document.getElementById("aiAnswerBody");
+  if (body) {
+    body.innerHTML = `<div class="muted">${escHtml(message || "Generating answer…")}</div>`;
   }
 
-  function renderAnswerText(answerText, sourceDocs) {
-    ensureAnswerUI();
-    const body = document.getElementById("aiAnswerBody");
-    if (body) body.innerHTML = parseTextToHtml(answerText);
+  const links = document.getElementById("aiSourcesLinks");
+  if (links) links.innerHTML = "";
+}
 
-    // Render clickable source links to bill.html
-    const links = document.getElementById("aiSourcesLinks");
-    if (links) {
-      const items = (sourceDocs || []).slice(0, ANSWER_SOURCES_LIMIT).map(d => {
-        const label = billShortId(d) || d.id;
-        return `<a href="./bill.html?id=${encodeURIComponent(d.id)}" style="display:inline-block;margin:6px 8px 0 0;color:var(--color-primary);font-size:13px;">${escHtml(label)}</a>`;
-      }).join("");
-      links.innerHTML = items
-        ? `<div class="muted" style="font-size:12px;margin-top:6px;">Source bills:</div>${items}`
-        : "";
+
+function renderAnswerText(answerText, sourceDocs) {
+  ensureAnswerUI();
+
+  const body = document.getElementById("aiAnswerBody");
+
+  if (body) {
+    // Prefer markdown parser if available
+    if (window.simpleMarkdownToHTML) {
+      body.innerHTML = window.simpleMarkdownToHTML(answerText);
+    } else {
+      body.innerHTML = parseTextToHtml(answerText);
     }
   }
 
-  function renderAnswerError(message) {
-    ensureAnswerUI();
-    const body = document.getElementById("aiAnswerBody");
-    if (body) body.innerHTML = `<div class="muted">${escHtml(message || "Could not generate an answer right now.")}</div>`;
-    const links = document.getElementById("aiSourcesLinks");
-    if (links) links.innerHTML = "";
+  // Render clickable source links
+  const links = document.getElementById("aiSourcesLinks");
+
+  if (links) {
+    const items = (sourceDocs || [])
+      .slice(0, ANSWER_SOURCES_LIMIT)
+      .map(d => {
+        const label = billShortId(d) || d.id;
+
+        return `
+          <a
+            href="./bill.html?id=${encodeURIComponent(d.id)}"
+            style="
+              display:inline-block;
+              margin:6px 8px 0 0;
+              color:var(--color-primary);
+              font-size:13px;
+            "
+          >
+            ${escHtml(label)}
+          </a>
+        `;
+      })
+      .join("");
+
+    links.innerHTML = items
+      ? `<div class="muted" style="font-size:12px;margin-top:6px;">Source bills:</div>${items}`
+      : "";
   }
+}
+
+
+function renderAnswerError(message) {
+  ensureAnswerUI();
+
+  const body = document.getElementById("aiAnswerBody");
+
+  if (body) {
+    body.innerHTML = `<div class="muted">${escHtml(message || "Could not generate an answer right now.")}</div>`;
+  }
+
+  const links = document.getElementById("aiSourcesLinks");
+  if (links) links.innerHTML = "";
+}
 
   /* ---------------- render ---------------- */
 
