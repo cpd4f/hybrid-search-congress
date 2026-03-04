@@ -1,11 +1,5 @@
-/* ---------------------------------------------------
-   GOOGLE FONTS
---------------------------------------------------- */
 @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&family=Libre+Baskerville:wght@400;700&display=swap');
 
-/* ---------------------------------------------------
-   ROOT DESIGN TOKENS
---------------------------------------------------- */
 :root {
   --font-sans: "Open Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-serif: "Libre Baskerville", Georgia, serif;
@@ -41,11 +35,13 @@
   --space-4: 20px;
   --space-5: 28px;
   --space-6: 40px;
+
+  /* Carousel defaults */
+  --carousel-gap: 18px;
+  --carousel-peek: 10px; /* subtle “peek” padding */
 }
 
-/* ---------------------------------------------------
-   RESET / BASE
---------------------------------------------------- */
+/* Base */
 *,
 *::before,
 *::after { box-sizing: border-box; }
@@ -67,9 +63,6 @@ img { max-width: 100%; }
 .muted { color: var(--color-muted); }
 .hidden { display: none !important; }
 
-/* ---------------------------------------------------
-   LAYOUT PRIMITIVES
---------------------------------------------------- */
 .container {
   max-width: var(--container);
   margin: 0 auto;
@@ -79,20 +72,12 @@ img { max-width: 100%; }
 
 .main { padding-bottom: 80px; }
 
-/* ---------------------------------------------------
-   GRID SYSTEM (MODULAR)
-   Use:
-   <div class="grid grid-12 gap-md">
-     <div class="col-12 md:col-4">...</div>
-     <div class="col-12 md:col-8">...</div>
-   </div>
---------------------------------------------------- */
+/* Grid system */
 .grid {
   display: grid;
   grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr));
   gap: var(--grid-gap);
 }
-
 .grid-12 { --grid-cols: 12; }
 .grid-6  { --grid-cols: 6; }
 .grid-4  { --grid-cols: 4; }
@@ -101,7 +86,6 @@ img { max-width: 100%; }
 .gap-md { --grid-gap: 24px; }
 .gap-lg { --grid-gap: 32px; }
 
-/* Column span utilities */
 .col-1 { grid-column: span 1; }
 .col-2 { grid-column: span 2; }
 .col-3 { grid-column: span 3; }
@@ -115,12 +99,10 @@ img { max-width: 100%; }
 .col-11 { grid-column: span 11; }
 .col-12 { grid-column: span 12; }
 
-/* Row span utilities */
 .row-1 { grid-row: span 1; }
 .row-2 { grid-row: span 2; }
 .row-3 { grid-row: span 3; }
 
-/* Responsive spans (Tailwind-ish naming) */
 @media (min-width: 720px) {
   .md\:col-1 { grid-column: span 1; }
   .md\:col-2 { grid-column: span 2; }
@@ -151,21 +133,17 @@ img { max-width: 100%; }
   .lg\:col-12 { grid-column: span 12; }
 }
 
-/* ---------------------------------------------------
-   TOPBAR
---------------------------------------------------- */
+/* Topbar */
 .topbar {
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
 }
-
 .topbar__inner {
   height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-
 .brand {
   display: inline-flex;
   align-items: center;
@@ -174,45 +152,27 @@ img { max-width: 100%; }
   font-size: 16px;
   letter-spacing: .2px;
 }
-
 .brand__mark {
   width: 24px;
   height: 24px;
   border-radius: 6px;
   background: var(--color-primary);
 }
-
-.topbar__nav {
-  display: flex;
-  gap: 20px;
-}
-
+.topbar__nav { display: flex; gap: 20px; }
 .topbar__link {
   font-size: 14px;
   color: var(--color-muted);
   padding: 8px 10px;
   border-radius: 10px;
 }
-
 .topbar__link.is-active {
   color: var(--color-text);
   background: rgba(26,115,232,0.10);
 }
 
-/* ---------------------------------------------------
-   HERO
---------------------------------------------------- */
-.hero {
-  padding-top: 72px;
-  padding-bottom: 52px;
-}
-
-.hero__inner {
-  text-align: center;
-  max-width: 760px;
-  margin: 0 auto;
-}
-
+/* Hero */
+.hero { padding-top: 72px; padding-bottom: 52px; }
+.hero__inner { text-align: center; max-width: 760px; margin: 0 auto; }
 .hero__title {
   font-family: var(--font-serif);
   font-size: 42px;
@@ -220,16 +180,9 @@ img { max-width: 100%; }
   margin: 0 0 14px 0;
   letter-spacing: -0.02em;
 }
+.hero__subtitle { margin: 0 0 28px 0; color: var(--color-muted); line-height: 1.55; }
 
-.hero__subtitle {
-  margin: 0 0 28px 0;
-  color: var(--color-muted);
-  line-height: 1.55;
-}
-
-/* ---------------------------------------------------
-   SEARCH BAR
---------------------------------------------------- */
+/* Search bar */
 .search__bar {
   display: flex;
   align-items: center;
@@ -239,7 +192,6 @@ img { max-width: 100%; }
   box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
-
 .search__input {
   flex: 1;
   border: none;
@@ -248,7 +200,6 @@ img { max-width: 100%; }
   outline: none;
   background: transparent;
 }
-
 .search__btn {
   background: var(--color-primary);
   color: #fff;
@@ -258,40 +209,28 @@ img { max-width: 100%; }
   font-weight: 700;
   cursor: pointer;
 }
-
 .search__btn:hover { background: var(--color-primary-hover); }
 
-/* ---------------------------------------------------
-   SECTIONS
---------------------------------------------------- */
+/* Sections */
 .section { margin-top: 42px; }
-
 .section__header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 16px;
   margin-bottom: 16px;
 }
-
-.section__title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-}
-
+.section__title { margin: 0; font-size: 18px; font-weight: 700; }
 .section__sub { color: var(--color-muted); }
+.section__actions { display: flex; gap: 10px; }
 
-/* ---------------------------------------------------
-   PANELS
---------------------------------------------------- */
+/* Panels */
 .panel {
   background: var(--color-surface);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-sm);
 }
-
 .panel__head {
   padding: 16px 18px;
   border-bottom: 1px solid var(--color-border);
@@ -300,93 +239,131 @@ img { max-width: 100%; }
   justify-content: space-between;
   gap: 12px;
 }
-
 .panel__title {
   font-weight: 700;
   font-size: 14px;
   letter-spacing: .2px;
 }
+.panel__body { padding: 18px; }
 
-.panel__body {
-  padding: 18px;
-}
-
-/* ---------------------------------------------------
-   ICON BUTTONS (rail controls)
---------------------------------------------------- */
+/* Icon buttons */
 .iconbtn {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
+  font-size: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-
 .iconbtn:hover { box-shadow: var(--shadow-sm); }
+.iconbtn:active { transform: translateY(1px); }
+.iconbtn[disabled] { opacity: 0.45; cursor: default; box-shadow: none; transform: none; }
 
-.rail-hint {
-  margin-top: 10px;
+/* Chips */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  background: rgba(0,0,0,0.02);
+  padding: 6px 10px;
+  border-radius: 999px;
   font-size: 12px;
-  color: var(--color-muted);
+  color: var(--color-text);
 }
 
 /* ---------------------------------------------------
-   CARD RAIL
+   SNAP CAROUSEL (NO "FREE SCROLL" FEEL)
+   Structure:
+   <div class="carousel" data-carousel>
+     <div class="carousel__viewport" id="recentBills">
+       ... .billcard ...
+     </div>
+   </div>
 --------------------------------------------------- */
-.rail {
-  display: flex;
-  gap: 18px;
+
+.carousel {
+  position: relative;
+}
+
+/* viewport is the scroll container */
+.carousel__viewport {
   overflow-x: auto;
-  padding-bottom: 8px;
+  overflow-y: hidden;
   scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+
+  /* No scrollbar */
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+
+  /* “peek” padding so edges never clip */
+  padding: 0 var(--carousel-peek) 10px var(--carousel-peek);
+
+  /* Make it feel snappy (less inertial drift) */
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.carousel__viewport::-webkit-scrollbar { display: none; }
+
+/* track: grid of cards that lays out pages */
+.carousel__track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 100%;
+  gap: var(--carousel-gap);
 }
 
-.rail::-webkit-scrollbar { display: none; }
+/* Each page is a grid of cards */
+.carousel__page {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  display: grid;
+  gap: var(--carousel-gap);
 
-/* ---------------------------------------------------
-   BILL CARD
---------------------------------------------------- */
+  /* default: 1 per page on small screens */
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+/* tablet: 2 per page */
+@media (min-width: 720px) {
+  .carousel__page {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* desktop: 4 per page */
+@media (min-width: 980px) {
+  .carousel__page {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Bill card */
 .billcard {
   position: relative;
-  min-width: 260px;
-  max-width: 260px;
   padding: 18px;
   background: var(--color-surface);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-sm);
   transition: transform .15s ease, box-shadow .15s ease;
-  scroll-snap-align: start;
+  min-height: 170px;
 }
-
 .billcard:hover {
   transform: translateY(-3px);
   box-shadow: var(--shadow-md);
 }
-
 .billcard__meta { display: flex; flex-direction: column; gap: 2px; }
-
 .billcard__id { font-weight: 800; font-size: 13px; }
 .billcard__status { font-size: 12px; color: var(--color-muted); }
-
-.billcard__title {
-  margin-top: 10px;
-  margin-bottom: 16px;
-  font-weight: 700;
-  line-height: 1.4;
-}
-
-.billcard__footer {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.billcard__committee { font-size: 12px; color: var(--color-muted); }
-.billcard__date { font-size: 12px; color: var(--color-muted); }
+.billcard__title { margin-top: 10px; margin-bottom: 16px; font-weight: 700; line-height: 1.4; }
+.billcard__footer { display: flex; flex-direction: column; gap: 6px; }
+.billcard__committee, .billcard__date { font-size: 12px; color: var(--color-muted); }
 
 /* Party dot */
 .party-dot {
@@ -402,40 +379,16 @@ img { max-width: 100%; }
 .party-dot--i { background: #7c3aed; }
 .party-dot--u { background: #9ca3af; }
 
-/* ---------------------------------------------------
-   CHIPS (tags, filters, etc.)
---------------------------------------------------- */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--color-border);
-  background: rgba(0,0,0,0.02);
-  padding: 6px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  color: var(--color-text);
-}
-
-/* ---------------------------------------------------
-   RESULTS LAYOUT (MODULAR)
-   - Answer full width (col-12)
-   - Filters + results below
---------------------------------------------------- */
+/* Results */
 .resultsWrap { margin-top: 18px; }
-
-/* Helpful: make the answer panel feel “primary” */
 .answerPanel .panel__body { padding-top: 14px; }
 
-/* ---------------------------------------------------
-   FOOTER
---------------------------------------------------- */
+/* Footer */
 .footer {
   border-top: 1px solid var(--color-border);
   padding: 28px 0;
   margin-top: 60px;
 }
-
 .footer__inner {
   display: flex;
   justify-content: space-between;
@@ -443,13 +396,9 @@ img { max-width: 100%; }
   gap: 16px;
   flex-wrap: wrap;
 }
-
 .footer__links { display: flex; gap: 16px; }
 .footer__link { color: var(--color-muted); }
 
-/* ---------------------------------------------------
-   RESPONSIVE
---------------------------------------------------- */
 @media (max-width: 900px) {
   .hero__title { font-size: 34px; }
   .search__btn { padding: 0 18px; }
