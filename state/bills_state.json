@@ -1,6 +1,6 @@
 {
   "meta": {
-    "last_run_utc": "2026-03-04T15:42:04.812Z",
+    "last_run_utc": "2026-03-04T15:52:33.447Z",
     "max_update_date_seen": "2026-03-04",
     "last_fix_tracking_utc": "2026-03-04T15:40:38Z",
     "last_fix_tracking_source_count": 11950
@@ -25529,11 +25529,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-hconres-72": {
-      "update_date_raw": null,
+      "update_date_raw": "2026-03-04",
       "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:57Z"
     },
     "119-sres-606": {
       "update_date_raw": "2026-03-03",
@@ -25543,11 +25543,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-s-3916": {
-      "update_date_raw": "2026-03-03",
-      "update_date_epoch": 1772496000,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:52:04Z"
     },
     "119-s-3923": {
       "update_date_raw": "2026-03-03",
@@ -25634,11 +25634,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-sres-624": {
-      "update_date_raw": null,
+      "update_date_raw": "2026-03-04",
       "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:52:09Z"
     },
     "119-s-3956": {
       "update_date_raw": "2026-03-03",
@@ -28364,11 +28364,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-hr-972": {
-      "update_date_raw": null,
+      "update_date_raw": "2026-03-04",
       "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:41Z"
     },
     "119-s-3798": {
       "update_date_raw": null,
@@ -28378,11 +28378,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-hr-2815": {
-      "update_date_raw": null,
+      "update_date_raw": "2026-03-04",
       "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:44Z"
     },
     "119-s-3804": {
       "update_date_raw": null,
@@ -28630,18 +28630,18 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-s-3900": {
-      "update_date_raw": null,
-      "update_date_epoch": 1772150400,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:52:01Z"
     },
     "119-s-3917": {
-      "update_date_raw": null,
-      "update_date_epoch": 1772150400,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:52:06Z"
     },
     "119-s-3926": {
       "update_date_raw": null,
@@ -31962,11 +31962,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-s-942": {
-      "update_date_raw": null,
-      "update_date_epoch": 1771977600,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:16Z"
     },
     "119-s-1237": {
       "update_date_raw": null,
@@ -31976,11 +31976,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-s-1459": {
-      "update_date_raw": null,
-      "update_date_epoch": 1771977600,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:24Z"
     },
     "119-hr-2189": {
       "update_date_raw": null,
@@ -31990,11 +31990,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-sjres-103": {
-      "update_date_raw": null,
-      "update_date_epoch": 1771977600,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:55Z"
     },
     "119-s-3743": {
       "update_date_raw": null,
@@ -33369,11 +33369,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-s-1260": {
-      "update_date_raw": null,
-      "update_date_epoch": 1771891200,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:21Z"
     },
     "119-hr-2876": {
       "update_date_raw": null,
@@ -33775,11 +33775,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-s-3894": {
-      "update_date_raw": null,
-      "update_date_epoch": 1771891200,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:59Z"
     },
     "119-hr-7646": {
       "update_date_raw": null,
@@ -34797,11 +34797,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-hr-3377": {
-      "update_date_raw": null,
-      "update_date_epoch": 1771804800,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:47Z"
     },
     "119-s-3041": {
       "update_date_raw": null,
@@ -42112,11 +42112,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-hr-7211": {
-      "update_date_raw": null,
-      "update_date_epoch": 1770681600,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:53Z"
     },
     "119-s-3630": {
       "update_date_raw": null,
@@ -44359,11 +44359,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-hr-7194": {
-      "update_date_raw": null,
-      "update_date_epoch": 1770336000,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:50Z"
     },
     "119-sres-581": {
       "update_date_raw": null,
@@ -67249,11 +67249,11 @@
       "indexed_at_utc": "2026-03-04T15:40:38Z"
     },
     "119-s-1406": {
-      "update_date_raw": null,
-      "update_date_epoch": 1765929600,
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
-      "indexed_at_utc": "2026-03-04T15:40:38Z"
+      "indexed_at_utc": "2026-03-04T15:51:26Z"
     },
     "119-s-2092": {
       "update_date_raw": null,
@@ -83676,6 +83676,104 @@
       "ai_summary_model": "gpt-4o-mini",
       "embed_model": "text-embedding-3-large",
       "indexed_at_utc": "2026-03-04T15:41:43Z"
+    },
+    "119-s-1163": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:51:19Z"
+    },
+    "119-s-1651": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:51:29Z"
+    },
+    "119-s-3973": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:11Z"
+    },
+    "119-hr-7772": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:12Z"
+    },
+    "119-hr-7779": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:16Z"
+    },
+    "119-hr-7763": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:17Z"
+    },
+    "119-hr-7771": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:19Z"
+    },
+    "119-hr-7775": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:21Z"
+    },
+    "119-hr-7773": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:23Z"
+    },
+    "119-hr-7768": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:25Z"
+    },
+    "119-s-3966": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:27Z"
+    },
+    "119-hr-7759": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:29Z"
+    },
+    "119-hr-7777": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:30Z"
+    },
+    "119-hr-7756": {
+      "update_date_raw": "2026-03-04",
+      "update_date_epoch": 1772582400,
+      "ai_summary_model": "gpt-4o-mini",
+      "embed_model": "text-embedding-3-large",
+      "indexed_at_utc": "2026-03-04T15:52:32Z"
     }
   }
 }
