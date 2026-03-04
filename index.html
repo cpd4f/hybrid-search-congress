@@ -11,13 +11,12 @@
   <!-- Site CSS -->
   <link rel="stylesheet" href="./css/styles.css" />
 
-  <!-- Base JS (loads jQuery + shared config/utilities) -->
+  <!-- Base JS (loads jQuery + shared helpers if present) -->
   <script src="./js/app.js" defer></script>
 
-  <!-- AI Search JS (we'll create next) -->
+  <!-- AI Search JS (Typesense + OpenAI via Workers) -->
   <script src="./js/ai-search.js" defer></script>
 
-  <!-- (Optional) App icon -->
   <link rel="icon" href="./assets/favicon.ico" />
 </head>
 
@@ -46,23 +45,25 @@
           Find legislation by keywords, sponsor, committee, topic, or ask a plain-English question.
         </p>
 
-        <!-- Search bar -->
-        <form class="search" id="searchForm" role="search" aria-label="Bill search">
+        <!-- Search bar (IDs must match ai-search.js) -->
+        <form class="search" id="mainSearchForm" role="search" aria-label="Bill search">
           <div class="search__bar">
             <span class="search__icon" aria-hidden="true"></span>
+
             <input
               class="search__input"
-              id="q"
+              id="mainSearchInput"
               name="q"
               type="search"
               autocomplete="off"
               placeholder="e.g., wildfire mitigation grants, HR 123, aviation safety…"
             />
+
             <button class="search__btn" type="submit">Search</button>
           </div>
 
-          <!-- Optional quick filters row (we can wire these later) -->
-          <div class="search__filters" aria-label="Quick filters">
+          <!-- Optional quick filters row (we’ll wire later) -->
+          <div class="search__filters" aria-label="Quick filters" style="display:none;">
             <button type="button" class="chip" data-filter="chamber:House">House</button>
             <button type="button" class="chip" data-filter="chamber:Senate">Senate</button>
             <button type="button" class="chip" data-filter="status:Introduced">Introduced</button>
@@ -83,41 +84,14 @@
       </div>
 
       <div class="container">
-        <!-- Horizontal card slider -->
-        <div class="rail" id="recentRail" aria-label="Recent bills" role="region">
-          <!-- Card template (repeat 12) -->
-          <a class="billcard" href="./bill.html?id=119-hr-123">
-            <!-- Sponsor party dot: red / blue / purple / gray -->
-            <span class="party-dot party-dot--r" title="Sponsor: Republican" aria-label="Sponsor party Republican"></span>
+        <!-- IMPORTANT: Keep empty. ai-search.js will populate -->
+        <div class="rail" id="recentBills" aria-label="Recent bills" role="region"></div>
 
-            <div class="billcard__meta">
-              <div class="billcard__id">H.R. 123</div>
-              <div class="billcard__status">Introduced</div>
-            </div>
-
-            <div class="billcard__title">
-              A bill to improve wildfire mitigation programs and support county resilience initiatives…
-            </div>
-
-            <div class="billcard__footer">
-              <div class="billcard__committee" title="Committee">
-                House Committee on Transportation and Infrastructure
-              </div>
-              <div class="billcard__date" title="Latest action date">
-                Updated Feb 12, 2026
-              </div>
-            </div>
-          </a>
-
-          <!-- Repeat cards... -->
-        </div>
-
-        <!-- Subtle hint for mouse users -->
         <div class="rail-hint">Scroll horizontally to browse</div>
       </div>
     </section>
 
-    <!-- Results area (below the fold, populated after search) -->
+    <!-- Results area (hidden until search; JS should unhide or you can remove hidden) -->
     <section class="section section--results" id="resultsSection" hidden>
       <div class="container section__header">
         <h2 class="section__title">Results</h2>
@@ -127,31 +101,30 @@
       </div>
 
       <div class="container results">
-        <!-- Left rail (facets) -->
+        <!-- Left rail (facets placeholder) -->
         <aside class="results__filters" aria-label="Filters">
           <div class="panel">
             <div class="panel__title">Filter</div>
             <div class="panel__body" id="filtersMount">
-              <!-- Facets mount here -->
+              <div class="muted">Filters coming soon.</div>
             </div>
           </div>
         </aside>
 
-        <!-- Main results list -->
+        <!-- Main results list (ID must match ai-search.js) -->
         <div class="results__list" aria-label="Search results">
           <div class="panel">
-            <div class="panel__body" id="resultsMount">
-              <!-- Results mount here -->
+            <div class="panel__body" id="results">
+              <div class="muted">Search results will appear here.</div>
             </div>
           </div>
         </div>
 
-        <!-- Right rail (AI answer) -->
+        <!-- Right rail (AI answer placeholder) -->
         <aside class="results__answer" aria-label="Answer">
           <div class="panel">
             <div class="panel__title">Answer</div>
-            <div class="panel__body" id="answerMount">
-              <!-- AI answer mount here -->
+            <div class="panel__body" id="aiAnswer">
               <div class="muted">Ask a question above to get a plain-English answer.</div>
             </div>
           </div>
@@ -169,10 +142,5 @@
       </div>
     </div>
   </footer>
-
-  <!-- JS hooks (we’ll add later) -->
-  <script>
-    // Placeholder: wire Typesense recent bills + search handlers here later
-  </script>
 </body>
 </html>
