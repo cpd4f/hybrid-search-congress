@@ -2,7 +2,7 @@
  * Congress -> OpenAI (AI summary + embeddings) -> Typesense upsert
  *
  * Adds:
- *  1) Soft-fail per bill (after existing internal retries) and continue
+ *  1) Soft-fail per bill (after existing internal retries + optional bill-level retries) and continue
  *  2) Failed queue persisted to state/bills_failed.json
  *  3) At start of each run (AFTER optional fix-tracking export/rebuild), retry failed queue first
  *  4) Then run the rest normally
@@ -18,6 +18,10 @@
  *         - THEN detect ALL docs missing embeddings -> backfill those (ALL)
  *         - then proceed like upsert_new_updated
  *    - reindex_all
+ *
+ * Bill-level wrapper retries (optional):
+ * - BILL_BUILD_ATTEMPTS (default 2)
+ * - BILL_BUILD_BASE_DELAY_MS (default 1250)
  *
  * Schema lock (congress_bills):
  * Required fields (optional:false):
@@ -189,6 +193,28 @@ function pickUpdateDate(obj) {
   return obj?.updateDateIncludingText || obj?.updateDate || null;
 }
 
+// ---------- bill-level wrapper retry (NEW) ----------
+async function attemptBuildBill(builderFn, { label, attempts, baseDelayMs } = {}) {
+  const max = Math.max(1, attempts || 1);
+  const base = Math.max(0, baseDelayMs || 0);
+
+  let lastErr = null;
+
+  for (let i = 1; i <= max; i++) {
+    try {
+      if (i > 1) warn(`Bill build retry ${i}/${max} for ${label || "bill"}...`);
+      return await builderFn();
+    } catch (e) {
+      lastErr = e;
+      if (i >= max) break;
+      const delay = base ? Math.round(base * Math.pow(2, i - 1)) : 0;
+      if (delay) await sleep(delay);
+    }
+  }
+
+  throw lastErr || new Error("Bill build failed");
+}
+
 // ---------- chamber fallback (schema-required) ----------
 function deriveChamberFromType(type) {
   const t = safeLower(type);
@@ -307,14 +333,11 @@ async function typesenseImportUpsert(docs, collectionName) {
       r = JSON.parse(line);
     } catch {
       errors.push("Unparseable import result line.");
-      // fallback: if we can map by index to docs
       const fallbackId = docs?.[i]?.id;
       if (fallbackId) failIds.push(String(fallbackId));
       continue;
     }
 
-    // Typesense import responses commonly include:
-    // { success: true, id: "..." } OR { success: true, document: "..." } OR on error: { success:false, error:"...", id:"..." }
     const respId = r?.id || r?.document || r?.document_id || r?.doc_id || null;
     const mappedId = respId || docs?.[i]?.id || null;
 
@@ -552,7 +575,6 @@ async function flushBatch({ batchItems, collectionName, state, failedQueue }) {
       } else if (failSet.has(id)) {
         recordFailure(failedQueue, id, "typesense_import", (r.errors || []).join(" | ") || "Typesense import failed");
       } else {
-        // If Typesense response didn't map cleanly, be conservative: treat as failed.
         recordFailure(failedQueue, id, "typesense_import", "Typesense import result missing id mapping");
       }
     }
@@ -560,7 +582,6 @@ async function flushBatch({ batchItems, collectionName, state, failedQueue }) {
     batchItems.length = 0;
     return { ok: r.okIds.length, fail: r.failIds.length };
   } catch (e) {
-    // Hard import failure: mark every doc in batch as failed, clear batch, continue
     const msg = String(e?.message || e);
     warn(`Typesense import hard-failed for batch (${batchItems.length}). Marking all as failed and continuing.`);
     for (const item of batchItems) {
@@ -573,14 +594,8 @@ async function flushBatch({ batchItems, collectionName, state, failedQueue }) {
   }
 }
 
-// ---------- single bill processor (returns doc + stateUpdate; caller handles failures/queue) ----------
-async function buildBillDocAndStateUpdate({
-  openai,
-  summaryModel,
-  embedModel,
-  item,
-  forcedBillId
-}) {
+// ---------- single bill processor ----------
+async function buildBillDocAndStateUpdate({ openai, summaryModel, embedModel, item, forcedBillId }) {
   const billId = forcedBillId || normalizeBillId(item.congress, item.type, item.number);
 
   let congress = item?.congress;
@@ -598,27 +613,20 @@ async function buildBillDocAndStateUpdate({
   const detailUrl = buildBillDetailUrl(congress, billType, billNumber);
   const detailJson = await fetchJson(detailUrl, { label: "DETAIL", retries: 3 });
 
-  // Required fields (schema)
   const congressInt = parseInt(congress, 10);
   const typeStr = safeLower(billType);
   const numberInt = parseInt(billNumber, 10);
 
-  // title required
   const title = String(item?.title || detailJson?.bill?.title || "").trim() || billId;
 
-  // chamber required
   const chamberRaw = item?.originChamber || detailJson?.bill?.originChamber || detailJson?.originChamber || undefined;
   const chamber = normalizeChamber(chamberRaw, billType);
 
-  const introduced_date = extractIntroducedDate(detailJson); // required int64
+  const introduced_date = extractIntroducedDate(detailJson);
 
-  // update_date required int64
   const updateRaw = pickUpdateDate(item) || pickUpdateDate(detailJson?.bill) || pickUpdateDate(detailJson) || null;
-
-  // If still missing, keep it sortable-ish: fall back to introduced_date
   const update_date = updateRaw ? toEpochSeconds(updateRaw) : introduced_date || 0;
 
-  // Optional extras
   const short_title = detailJson?.bill?.shortTitle || detailJson?.bill?.short_title || undefined;
   const policy_area = extractPolicyArea(detailJson);
   const subjects = extractSubjects(detailJson);
@@ -628,7 +636,7 @@ async function buildBillDocAndStateUpdate({
   const latest_action_text = item?.latestAction?.text || detailJson?.bill?.latestAction?.text || undefined;
 
   const latest_action_date = extractLatestActionDate(detailJson, item);
-  void latest_action_date; // reserved if you add it to schema later
+  void latest_action_date;
 
   const { committees } = await fetchCommitteesIfNeeded(detailJson);
 
@@ -652,7 +660,6 @@ async function buildBillDocAndStateUpdate({
     .filter(Boolean)
     .join("\n");
 
-  // ai_summary_text required
   const summaryResp = await openaiWithRetry(
     () =>
       openai.responses.create({
@@ -677,7 +684,6 @@ async function buildBillDocAndStateUpdate({
 
   const ai_summary_text = String((summaryResp.output_text || "").trim() || title).trim() || billId;
 
-  // embedding required (dim 3072)
   const embedText = [
     title,
     short_title || "",
@@ -704,7 +710,6 @@ async function buildBillDocAndStateUpdate({
     throw new Error(`Embedding dim mismatch for ${billId}: got ${embedding.length}, expected 3072`);
   }
 
-  // Build doc: ONLY include schema fields
   const doc = {
     id: billId,
     congress: congressInt,
@@ -714,26 +719,24 @@ async function buildBillDocAndStateUpdate({
     introduced_date,
     update_date,
     title,
-    short_title, // optional
+    short_title,
     ai_summary_text,
-    policy_area, // optional
-    subjects, // optional
-    status: undefined, // optional (omit)
-    committee_stage: undefined, // optional (omit)
-    committees, // optional
-    sponsor_party, // optional
-    sponsor_state, // optional
-    cosponsor_count, // optional
-    latest_action_text, // optional
+    policy_area,
+    subjects,
+    status: undefined,
+    committee_stage: undefined,
+    committees,
+    sponsor_party,
+    sponsor_state,
+    cosponsor_count,
+    latest_action_text,
     embedding
   };
 
-  // Strip undefined optional keys
   for (const k of Object.keys(doc)) {
     if (doc[k] === undefined) delete doc[k];
   }
 
-  // State update (apply only after successful Typesense import)
   const stateUpdate = {
     update_date_raw: updateRaw || null,
     update_date_epoch: update_date || 0,
@@ -771,8 +774,11 @@ async function main() {
   const pageSize = envInt("CONGRESS_PAGE_SIZE", 100);
   const tsBatchSize = envInt("TYPESENSE_BATCH_SIZE", 10);
 
-  // Failed queue tuning
   const maxFailAttempts = envInt("FAILED_MAX_ATTEMPTS", 5);
+
+  // NEW: bill-level wrapper retries
+  const billBuildAttempts = envInt("BILL_BUILD_ATTEMPTS", 2);
+  const billBuildBaseDelayMs = envInt("BILL_BUILD_BASE_DELAY_MS", 1250);
 
   const congresses = (process.env.CONGRESSES || "119")
     .split(",")
@@ -796,12 +802,17 @@ async function main() {
   log("Typesense batch size:", tsBatchSize);
   log("Congress page size:", pageSize);
   log("Failed queue max attempts:", maxFailAttempts);
+  log("Bill build attempts (wrapper):", billBuildAttempts);
+  log("Bill build base delay (ms):", billBuildBaseDelayMs);
 
-  let attemptedBills = 0; // attempted bill builds (including failures)
-  let successfulUpserts = 0; // successful Typesense doc upserts
-  let newestUpdateSeenThisRun = null;
+  let attemptedBills = 0;
+  let successfulUpserts = 0;
   let typesenseOk = 0;
   let typesenseFail = 0;
+
+  // FIX: track MAX update date seen this run
+  let maxUpdateEpochSeenThisRun = 0;
+  let maxUpdateRawSeenThisRun = null;
 
   const batchItems = [];
   const startAll = Date.now();
@@ -813,7 +824,6 @@ async function main() {
     const docs = await typesenseExportAll(primaryCollection);
     rebuildStateFromTypesenseDocs(state, docs, { summaryModel, embedModel });
 
-    // Save rebuilt tracking immediately
     saveState(state);
     log("Fix-tracking: state rebuilt + written to disk.");
 
@@ -823,7 +833,7 @@ async function main() {
     log(`Fix-tracking: missing embeddings detected: ${missing.length}`);
   }
 
-  // ---- Phase 0: retry failed queue first (AFTER optional fix-tracking) ----
+  // ---- Phase 0: retry failed queue first ----
   const retryIds = listRetryableFailedIds(failedQueue, maxFailAttempts);
   if (retryIds.length) {
     log(`Failed queue: retrying ${retryIds.length} bill(s) first...`);
@@ -838,13 +848,17 @@ async function main() {
     attemptedBills++;
 
     try {
-      const built = await buildBillDocAndStateUpdate({
-        openai,
-        summaryModel,
-        embedModel,
-        item: null,
-        forcedBillId: billId
-      });
+      const built = await attemptBuildBill(
+        () =>
+          buildBillDocAndStateUpdate({
+            openai,
+            summaryModel,
+            embedModel,
+            item: null,
+            forcedBillId: billId
+          }),
+        { label: billId, attempts: billBuildAttempts, baseDelayMs: billBuildBaseDelayMs }
+      );
 
       batchItems.push({ doc: built.doc, stateUpdate: built.stateUpdate });
 
@@ -859,7 +873,6 @@ async function main() {
         typesenseFail += r.fail;
         successfulUpserts += r.ok;
 
-        // Persist progress frequently for resilience
         saveState(state);
         saveFailedQueue(failedQueue);
       }
@@ -873,7 +886,6 @@ async function main() {
   }
 
   // ---- Phase 1: backfill missing embeddings (ALL) ----
-  // (Requested order: after fix-tracking rebuild, we already retried failed queue; now backfill missing embeddings.)
   if (backfillIds.size && successfulUpserts < successTarget) {
     const arr = Array.from(backfillIds);
     log(`Backfill: processing ${arr.length} bill(s) missing embeddings...`);
@@ -881,20 +893,23 @@ async function main() {
     for (let i = 0; i < arr.length && successfulUpserts < successTarget; i++) {
       const billId = arr[i];
 
-      // If it’s in the failed queue, we already tried it; skip here to avoid duplicates this run.
       if (failedQueue.failed?.[billId]?.last_failed_utc) continue;
 
       log(`=== Backfill ${i + 1}/${arr.length}: ${billId} ===`);
       attemptedBills++;
 
       try {
-        const built = await buildBillDocAndStateUpdate({
-          openai,
-          summaryModel,
-          embedModel,
-          item: null,
-          forcedBillId: billId
-        });
+        const built = await attemptBuildBill(
+          () =>
+            buildBillDocAndStateUpdate({
+              openai,
+              summaryModel,
+              embedModel,
+              item: null,
+              forcedBillId: billId
+            }),
+          { label: billId, attempts: billBuildAttempts, baseDelayMs: billBuildBaseDelayMs }
+        );
 
         batchItems.push({ doc: built.doc, stateUpdate: built.stateUpdate });
 
@@ -941,15 +956,36 @@ async function main() {
         if (successfulUpserts >= successTarget) break;
 
         const billId = normalizeBillId(item.congress, item.type, item.number);
-        const apiUpdateRaw = pickUpdateDate(item);
-        if (!newestUpdateSeenThisRun && apiUpdateRaw) newestUpdateSeenThisRun = apiUpdateRaw;
 
-        // If it was a backfill candidate, it’s handled elsewhere (avoid duplicates)
+        const apiUpdateRaw = pickUpdateDate(item);
+        if (apiUpdateRaw) {
+          const ep = toEpochSeconds(apiUpdateRaw);
+          if (ep > maxUpdateEpochSeenThisRun) {
+            maxUpdateEpochSeenThisRun = ep;
+            maxUpdateRawSeenThisRun = apiUpdateRaw;
+          }
+        }
+
         if (backfillIds.has(billId)) continue;
 
         const prev = state.bills[billId];
-        const prevUpdateRaw = prev?.update_date_raw || prev?.update_date || null;
-        const shouldProcess = reindexAll ? true : !prev || prevUpdateRaw !== apiUpdateRaw;
+
+        // FIX: prev.update_date does not exist in your state format; compare raw if available, else epoch.
+        const prevUpdateRaw = prev?.update_date_raw || null;
+        const prevUpdateEpoch = Number.isFinite(prev?.update_date_epoch) ? prev.update_date_epoch : 0;
+
+        let shouldProcess = true;
+        if (!reindexAll) {
+          if (!prev) {
+            shouldProcess = true;
+          } else if (apiUpdateRaw) {
+            shouldProcess = prevUpdateRaw !== apiUpdateRaw;
+          } else {
+            // If API update raw missing, fall back to "process if we don't have an epoch"
+            shouldProcess = prevUpdateEpoch === 0;
+          }
+        }
+
         if (!shouldProcess) continue;
 
         attemptedBills++;
@@ -958,13 +994,17 @@ async function main() {
         log(`--- Processing ${idxLabel}: ${billId} (api_update=${apiUpdateRaw || "n/a"}) ---`);
 
         try {
-          const built = await buildBillDocAndStateUpdate({
-            openai,
-            summaryModel,
-            embedModel,
-            item,
-            forcedBillId: null
-          });
+          const built = await attemptBuildBill(
+            () =>
+              buildBillDocAndStateUpdate({
+                openai,
+                summaryModel,
+                embedModel,
+                item,
+                forcedBillId: null
+              }),
+            { label: billId, attempts: billBuildAttempts, baseDelayMs: billBuildBaseDelayMs }
+          );
 
           batchItems.push({ doc: built.doc, stateUpdate: built.stateUpdate });
 
@@ -1013,7 +1053,7 @@ async function main() {
   // meta
   state.meta = state.meta || {};
   state.meta.last_run_utc = new Date().toISOString();
-  if (newestUpdateSeenThisRun) state.meta.max_update_date_seen = newestUpdateSeenThisRun;
+  if (maxUpdateRawSeenThisRun) state.meta.max_update_date_seen = maxUpdateRawSeenThisRun;
 
   failedQueue.meta = failedQueue.meta || {};
   failedQueue.meta.last_run_utc = new Date().toISOString();
