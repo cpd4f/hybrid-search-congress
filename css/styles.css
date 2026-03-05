@@ -22,7 +22,7 @@
   --radius-md: 12px;
   --radius-lg: 18px;
 
-  --container: 1120px;
+  --container: clamp(800px, 85vw, 1620px);
 
   /* Grid system */
   --grid-cols: 12;

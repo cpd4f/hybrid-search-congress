@@ -63,6 +63,19 @@
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   }
 
+  function htmlishToText(input) {
+    const raw = String(input || "").trim();
+    if (!raw) return "";
+    try {
+      const div = document.createElement("div");
+      div.innerHTML = raw;
+      const txt = (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+      return txt || raw;
+    } catch (e) {
+      return raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    }
+  }
+
   function sponsorDotClass(party) {
     const p = String(party || "").toUpperCase();
     if (p === "R") return "party-dot party-dot--r";
@@ -370,7 +383,7 @@
     const committee = Array.isArray(doc.committees) && doc.committees.length ? doc.committees[0] : "";
     const partyLabel = sponsorPartyLabel(doc.sponsor_party);
     const partyClass = sponsorDotClass(doc.sponsor_party);
-    const officialSummary = detailData.officialSummary || doc.official_summary_text || doc.official_summary || "Official summary unavailable.";
+    const officialSummary = htmlishToText(detailData.officialSummary || doc.official_summary_text || doc.official_summary || "Official summary unavailable.");
     const congressUrl = detailData.congressUrl || congressGovBillUrl(doc);
     const actions = Array.isArray(detailData.actions) ? detailData.actions : [];
     const sponsors = Array.isArray(detailData.sponsors) ? detailData.sponsors : [];
@@ -666,7 +679,7 @@
       `Cosponsors: ${Number.isFinite(doc?.cosponsor_count) ? doc.cosponsor_count : "Unknown"}`,
       `Latest action: ${doc?.latest_action_text || ""}`,
       `AI summary: ${doc?.ai_summary_text || ""}`,
-      `Official summary: ${officialSummary || doc?.official_summary_text || doc?.official_summary || ""}`,
+      `Official summary: ${htmlishToText(officialSummary || doc?.official_summary_text || doc?.official_summary || "")}`,
       `Bill text version: ${textData?.summary || ""}`,
       `Original cosponsors: ${(Array.isArray(cosponsors) ? cosponsors.filter((c) => c.isOriginalCosponsor) : []).map((c) => c.fullName).join("; ") || "Unknown"}`,
       textSnippet ? `Bill text excerpt: ${textSnippet}` : "",
