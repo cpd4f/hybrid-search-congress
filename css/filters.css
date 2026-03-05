@@ -1,7 +1,4 @@
-/* ---------------------------------------------------
-   filters.css
-   Filters (custom accordion UI)
---------------------------------------------------- */
+/* Filters (custom accordion UI) */
 
 .filters {
   display: flex;
@@ -9,23 +6,20 @@
   gap: 12px;
 }
 
-/* Accordion container */
 .filter-acc {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-/* Each <details> item */
 .filter-acc__item {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.06);
   overflow: hidden;
 }
 
-/* <summary> toggle */
 .filter-acc__toggle {
   list-style: none;
   display: flex;
@@ -37,7 +31,7 @@
   user-select: none;
 }
 
-/* Hide default disclosure marker */
+/* Hide default disclosure triangle */
 .filter-acc__toggle::-webkit-details-marker { display: none; }
 .filter-acc__toggle::marker { content: ""; }
 
@@ -46,27 +40,22 @@
   font-size: 14px;
 }
 
-/* Badge (selection count / range label) */
 .filter-acc__badge {
   margin-left: auto;
   font-size: 12px;
-  color: var(--color-text);
+  color: #111827;
   background: rgba(0,0,0,0.05);
   border: 1px solid rgba(0,0,0,0.08);
   padding: 4px 8px;
   border-radius: 999px;
   min-width: 28px;
   text-align: center;
-  display: none; /* default hidden */
 }
 
-.filter-acc__badge.is-on {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.filter-acc__badge:empty {
+  display: none;
 }
 
-/* Chevron */
 .filter-acc__chev {
   display: inline-flex;
   width: 22px;
@@ -75,25 +64,23 @@
   justify-content: center;
   border-radius: 8px;
   background: rgba(0,0,0,0.04);
-  transition: transform 0.15s ease;
+  transition: transform .15s ease;
 }
 
 .filter-acc__item[open] .filter-acc__chev {
   transform: rotate(180deg);
 }
 
-/* Panel wrapper */
 .filter-acc__panel {
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid #e5e7eb;
 }
 
-/* Body scroll area */
 .filter-acc__body {
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 320px;
+  max-height: 300px;
   overflow: auto;
 }
 
@@ -110,24 +97,33 @@
   background: rgba(0,0,0,0.03);
 }
 
-.filter-opt input[type="checkbox"],
+.filter-opt input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+/* FIX: ai-search.js uses .filter-opt__text (keep .filter-opt__label too) */
+.filter-opt__label {
+  font-size: 14px;
+}
+
+.filter-opt__text {
+  font-size: 14px;
+}
+
+/* FIX: match checkbox sizing for radios too */
 .filter-opt input[type="radio"] {
   width: 18px;
   height: 18px;
-  margin: 0;
-}
-
-.filter-opt__label {
-  font-size: 14px;
 }
 
 .filter-opt__count {
   margin-left: auto;
   font-size: 12px;
-  color: var(--color-muted);
+  color: #6b7280;
 }
 
-/* Clear button row */
+/* Clear */
 .filters__actions {
   display: flex;
   justify-content: flex-end;
@@ -135,8 +131,8 @@
 
 .filters__clear {
   width: 100%;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  border: 1px solid #e5e7eb;
+  background: #fff;
   padding: 10px 12px;
   border-radius: 14px;
   font-weight: 700;
@@ -147,40 +143,16 @@
   background: rgba(0,0,0,0.02);
 }
 
-/* ---------------------------------------------------
-   jQuery slide animation support
-   Panels are animated by JS; keep hidden unless <details open>
---------------------------------------------------- */
+/* --- Additions for jQuery slide animation --- */
+/* The panel is animated by jQuery; keep it hidden unless <details open> */
 .filter-acc__item:not([open]) .filter-acc__panel {
   display: none;
 }
 
-/* Focus styles */
+/* Make the toggle feel like a control without affecting global .btn styles */
 .filter-acc__toggle:focus { outline: none; }
 .filter-acc__toggle:focus-visible {
   outline: 2px solid rgba(26,115,232,0.35);
   outline-offset: 2px;
   border-radius: 14px;
-}
-
-/* ---------------------------------------------------
-   Dark-mode touch-ups (since bg is darker, hover needs less “ink”)
---------------------------------------------------- */
-@media (prefers-color-scheme: dark) {
-  .filter-opt:hover {
-    background: rgba(255,255,255,0.06);
-  }
-
-  .filter-acc__chev {
-    background: rgba(255,255,255,0.06);
-  }
-
-  .filter-acc__badge {
-    background: rgba(255,255,255,0.08);
-    border-color: rgba(255,255,255,0.10);
-  }
-
-  .filters__clear:hover {
-    background: rgba(255,255,255,0.06);
-  }
 }
