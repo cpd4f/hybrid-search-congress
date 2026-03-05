@@ -85,13 +85,23 @@
     const cleanId = String(id || "").trim();
     if (!cleanId) return null;
 
-    async function runSearchAttempt(label, targetId) {
+    const parsed = (() => {
+      const parts = cleanId.split("-").filter(Boolean);
+      if (parts.length < 3) return null;
+      const congress = Number.parseInt(parts[0], 10);
+      const number = Number.parseInt(parts[parts.length - 1], 10);
+      const type = parts.slice(1, parts.length - 1).join("-").toLowerCase();
+      if (!Number.isFinite(congress) || !Number.isFinite(number) || !type) return null;
+      return { congress, number, type };
+    })();
+
+    async function runSearchAttempt(label, filterBy) {
       const params = new URLSearchParams({
         q: "*",
         query_by: "title,ai_summary_text",
         per_page: "1",
         page: "1",
-        filter_by: `id:=${escFilterVal(targetId)}`,
+        filter_by: filterBy,
         include_fields: BILL_INCLUDE_FIELDS
       });
 
@@ -119,16 +129,32 @@
       return hits[0]?.document || null;
     }
 
-    const attempts = [
-      { label: "exact-id-search", value: cleanId },
-      { label: "lowercase-id-search", value: cleanId.toLowerCase() }
+    const directAttempts = [
+      { label: "exact-id-search", filterBy: `id:=${escFilterVal(cleanId)}` },
+      { label: "lowercase-id-search", filterBy: `id:=${escFilterVal(cleanId.toLowerCase())}` }
     ];
 
+    if (parsed) {
+      directAttempts.push(
+        {
+          label: "bill-fields-search",
+          filterBy: `congress:=${parsed.congress} && type:=${escFilterVal(parsed.type)} && number:=${parsed.number}`
+        },
+        {
+          label: "bill-fields-uppercase-type-search",
+          filterBy: `congress:=${parsed.congress} && type:=${escFilterVal(parsed.type.toUpperCase())} && number:=${parsed.number}`
+        }
+      );
+    }
+
+    const uniqueAttempts = directAttempts.filter((attempt, i, arr) =>
+      attempt.filterBy && arr.findIndex((a) => a.filterBy === attempt.filterBy) === i
+    );
+
     let lastError = null;
-    for (const attempt of attempts) {
-      if (!attempt.value) continue;
+    for (const attempt of uniqueAttempts) {
       try {
-        const doc = await runSearchAttempt(attempt.label, attempt.value);
+        const doc = await runSearchAttempt(attempt.label, attempt.filterBy);
         if (doc) {
           console.info(`[bill] ${attempt.label}: found document`, doc.id);
           return doc;
@@ -141,17 +167,15 @@
     }
 
     const multiSearchBody = {
-      searches: attempts
-        .filter((attempt, i, arr) => attempt.value && arr.findIndex(a => a.value === attempt.value) === i)
-        .map((attempt) => ({
-          collection: COLLECTION,
-          q: "*",
-          query_by: "title,ai_summary_text",
-          per_page: 1,
-          page: 1,
-          filter_by: `id:=${escFilterVal(attempt.value)}`,
-          include_fields: BILL_INCLUDE_FIELDS
-        }))
+      searches: uniqueAttempts.map((attempt) => ({
+        collection: COLLECTION,
+        q: "*",
+        query_by: "title,ai_summary_text",
+        per_page: 1,
+        page: 1,
+        filter_by: attempt.filterBy,
+        include_fields: BILL_INCLUDE_FIELDS
+      }))
     };
 
     if (!multiSearchBody.searches.length) return null;
@@ -195,6 +219,7 @@
     }
     return null;
   }
+
 
   async function embedText(text) {
     const res = await fetch(OA_EMBED_URL, {
