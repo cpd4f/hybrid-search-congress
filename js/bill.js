@@ -7,11 +7,13 @@
 
   const COLLECTION = (window.APP_CONFIG && window.APP_CONFIG.TYPESENSE_INDEX) || "congress_bills";
   const EMBED_MODEL = (window.APP_CONFIG && window.APP_CONFIG.OPENAI_EMBED_MODEL) || "text-embedding-3-large";
+  const ANSWER_MODEL = (window.APP_CONFIG && window.APP_CONFIG.OPENAI_ANSWER_MODEL) || "gpt-4o-mini";
   const DEFAULT_ALPHA = (window.APP_CONFIG && window.APP_CONFIG.HYBRID_ALPHA) || 0.65;
 
   const TS_DOCS_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
   const TS_MULTI_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/multi_search`;
   const OA_EMBED_URL = `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/embeddings`;
+  const OA_RESPONSES_URL = `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/responses`;
   const CONGRESS_PROXY_URL = `${CONGRESS_WORKER_BASE.replace(/\/$/, "")}/`;
   const BILL_INCLUDE_FIELDS = [
     "id",
@@ -81,6 +83,41 @@
     const t = String(s || "").replace(/_/g, " ").trim();
     if (!t) return "";
     return t.split(/\s+/).map(w => w.slice(0, 1).toUpperCase() + w.slice(1)).join(" ");
+  }
+
+  const billQaState = {
+    history: [],
+    currentDoc: null,
+    currentTextData: null
+  };
+
+  function parseTextToHtml(text) {
+    const raw = String(text || "");
+    const escaped = escHtml(raw);
+    const lines = escaped.split(/\r?\n/);
+    const out = [];
+    let inList = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const isBullet = trimmed.startsWith("- ") || trimmed.startsWith("• ");
+      if (isBullet) {
+        if (!inList) {
+          out.push('<ul style="margin:10px 0 0 18px; padding:0;">');
+          inList = true;
+        }
+        out.push(`<li style="margin:6px 0;">${trimmed.replace(/^(- |• )/, "")}</li>`);
+      } else {
+        if (inList) {
+          out.push("</ul>");
+          inList = false;
+        }
+        if (trimmed.length) out.push(`<p style="margin:10px 0; line-height:1.5;">${line}</p>`);
+      }
+    }
+
+    if (inList) out.push("</ul>");
+    return out.join("");
   }
 
   function parseBillId(id) {
@@ -504,9 +541,158 @@
         ${pdfButton}
       </div>
       <div class="panel__body">
+        <section class="bill-qa">
+          <div class="bill-qa__title">Ask a question about the bill</div>
+          <form id="billQaForm" class="bill-qa__form">
+            <input id="billQaInput" class="bill-qa__input" type="text" autocomplete="off" placeholder="Ask about this bill…" />
+            <button type="submit" class="bill-qa__btn">Ask</button>
+          </form>
+          <div id="billQaAnswer" class="bill-qa__answer muted">Ask a question to get a bill-specific answer.</div>
+          <div id="billQaFollowWrap" hidden>
+            <form id="billQaFollowForm" class="bill-qa__form bill-qa__form--follow">
+              <input id="billQaFollowInput" class="bill-qa__input" type="text" autocomplete="off" placeholder="Ask a follow-up…" />
+              <button type="submit" class="bill-qa__btn">Ask</button>
+            </form>
+          </div>
+        </section>
         ${bodyHtml}
       </div>
     `;
+
+    wireBillQa(doc, textData);
+  }
+
+
+  async function generateBillAnswer({ doc, textData, question, history }) {
+    const textSnippet = String(textData?.html || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 10000);
+
+    const prior = (history || [])
+      .slice(-6)
+      .map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.text}`)
+      .join("\n");
+
+    const prompt = [
+      `Bill id: ${doc?.id || "unknown"}`,
+      `Title: ${doc?.title || ""}`,
+      `Status: ${doc?.status ? titleCaseFromToken(doc.status) : "Unknown"}`,
+      `Latest action: ${doc?.latest_action_text || ""}`,
+      `AI summary: ${doc?.ai_summary_text || ""}`,
+      `Official summary: ${doc?.official_summary_text || doc?.official_summary || ""}`,
+      `Bill text version: ${textData?.summary || ""}`,
+      textSnippet ? `Bill text excerpt: ${textSnippet}` : "",
+      prior ? `Conversation so far:
+${prior}` : "",
+      `User question: ${question}`,
+      "Answer clearly and concisely. If unknown from the provided bill context, say so."
+    ].filter(Boolean).join("\n\n");
+
+    const res = await fetch(OA_RESPONSES_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: ANSWER_MODEL,
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: "You are a helpful legislative assistant focused on a single bill." }]
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: prompt }]
+          }
+        ],
+        temperature: 0.2
+      })
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "(no body)");
+      throw new Error(`Bill answer failed HTTP ${res.status}: ${txt}`);
+    }
+
+    const json = await res.json();
+    const out = json?.output || [];
+    let text = "";
+    for (const item of out) {
+      const content = item?.content || [];
+      for (const part of content) {
+        if (part?.type === "output_text" && part?.text) text += part.text;
+      }
+    }
+    return String(text || "").trim();
+  }
+
+  function renderBillQaAnswer(answer, isError) {
+    const body = document.getElementById("billQaAnswer");
+    if (!body) return;
+    if (isError) {
+      body.innerHTML = `<div class="muted">${escHtml(answer || "Could not generate an answer.")}</div>`;
+      return;
+    }
+    if (window.simpleMarkdownToHTML) body.innerHTML = window.simpleMarkdownToHTML(answer || "");
+    else body.innerHTML = parseTextToHtml(answer || "");
+  }
+
+  function setBillQaLoading(msg) {
+    const body = document.getElementById("billQaAnswer");
+    if (body) body.innerHTML = `<div class="muted">${escHtml(msg || "Thinking…")}</div>`;
+  }
+
+  function wireBillQa(doc, textData) {
+    billQaState.currentDoc = doc;
+    billQaState.currentTextData = textData;
+    billQaState.history = [];
+
+    const askForm = document.getElementById("billQaForm");
+    const askInput = document.getElementById("billQaInput");
+    const followForm = document.getElementById("billQaFollowForm");
+    const followInput = document.getElementById("billQaFollowInput");
+    const followWrap = document.getElementById("billQaFollowWrap");
+
+    async function submitQuestion(question) {
+      const q = String(question || "").trim();
+      if (!q) return;
+      setBillQaLoading("Generating answer…");
+      try {
+        const answer = await generateBillAnswer({
+          doc: billQaState.currentDoc,
+          textData: billQaState.currentTextData,
+          question: q,
+          history: billQaState.history
+        });
+        billQaState.history.push({ role: "user", text: q });
+        billQaState.history.push({ role: "assistant", text: answer });
+        renderBillQaAnswer(answer, false);
+        if (followWrap) followWrap.removeAttribute("hidden");
+      } catch (e) {
+        console.warn("[bill-qa] failed", e);
+        renderBillQaAnswer("I couldn't answer that right now. Please try again.", true);
+      }
+    }
+
+    if (askForm && askInput) {
+      askForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const q = askInput.value;
+        askInput.value = "";
+        submitQuestion(q);
+      });
+    }
+
+    if (followForm && followInput) {
+      followForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const q = followInput.value;
+        followInput.value = "";
+        submitQuestion(q);
+      });
+    }
   }
 
 
@@ -555,14 +741,6 @@
 
       const congressPermalink = await fetchCongressPermalink(doc);
       renderBillDetail(doc, congressPermalink);
-
-      try {
-        const textData = await fetchBillText(doc);
-        renderBillText(textData, doc);
-      } catch (textErr) {
-        console.warn("[bill-text] failed to load bill text", textErr);
-        renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", html: "", pdfUrl: "" }, doc);
-      }
 
       try {
         const textData = await fetchBillText(doc);
