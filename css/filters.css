@@ -1,1 +1,186 @@
+/* ---------------------------------------------------
+   filters.css
+   Filters (custom accordion UI)
+--------------------------------------------------- */
 
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Accordion container */
+.filter-acc {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Each <details> item */
+.filter-acc__item {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* <summary> toggle */
+.filter-acc__toggle {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Hide default disclosure marker */
+.filter-acc__toggle::-webkit-details-marker { display: none; }
+.filter-acc__toggle::marker { content: ""; }
+
+.filter-acc__label {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* Badge (selection count / range label) */
+.filter-acc__badge {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-text);
+  background: rgba(0,0,0,0.05);
+  border: 1px solid rgba(0,0,0,0.08);
+  padding: 4px 8px;
+  border-radius: 999px;
+  min-width: 28px;
+  text-align: center;
+  display: none; /* default hidden */
+}
+
+.filter-acc__badge.is-on {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Chevron */
+.filter-acc__chev {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.04);
+  transition: transform 0.15s ease;
+}
+
+.filter-acc__item[open] .filter-acc__chev {
+  transform: rotate(180deg);
+}
+
+/* Panel wrapper */
+.filter-acc__panel {
+  border-top: 1px solid var(--color-border);
+}
+
+/* Body scroll area */
+.filter-acc__body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* Option row */
+.filter-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.filter-opt:hover {
+  background: rgba(0,0,0,0.03);
+}
+
+.filter-opt input[type="checkbox"],
+.filter-opt input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.filter-opt__label {
+  font-size: 14px;
+}
+
+.filter-opt__count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+/* Clear button row */
+.filters__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.filters__clear {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.filters__clear:hover {
+  background: rgba(0,0,0,0.02);
+}
+
+/* ---------------------------------------------------
+   jQuery slide animation support
+   Panels are animated by JS; keep hidden unless <details open>
+--------------------------------------------------- */
+.filter-acc__item:not([open]) .filter-acc__panel {
+  display: none;
+}
+
+/* Focus styles */
+.filter-acc__toggle:focus { outline: none; }
+.filter-acc__toggle:focus-visible {
+  outline: 2px solid rgba(26,115,232,0.35);
+  outline-offset: 2px;
+  border-radius: 14px;
+}
+
+/* ---------------------------------------------------
+   Dark-mode touch-ups (since bg is darker, hover needs less “ink”)
+--------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  .filter-opt:hover {
+    background: rgba(255,255,255,0.06);
+  }
+
+  .filter-acc__chev {
+    background: rgba(255,255,255,0.06);
+  }
+
+  .filter-acc__badge {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.10);
+  }
+
+  .filters__clear:hover {
+    background: rgba(255,255,255,0.06);
+  }
+}
