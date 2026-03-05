@@ -219,21 +219,25 @@ function normalizeChamber(v, fallbackType) {
 }
 
 // ---------- URL builders ----------
+// CONGRESS_API_BASE is now https://api.congress.gov/v3 (NO trailing /bill)
 function buildCongressListUrl(congress, limit, offset) {
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
   const key = mustEnv("CONGRESS_API_KEY");
-  return `${base}/${congress}?format=json&sort=updateDate+desc&limit=${limit}&offset=${offset}&api_key=${encodeURIComponent(
+  // /bill/{congress}
+  return `${base}/bill/${congress}?format=json&sort=updateDate+desc&limit=${limit}&offset=${offset}&api_key=${encodeURIComponent(
     key
   )}`;
 }
 function buildBillDetailUrl(congress, billType, billNumber) {
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
   const key = mustEnv("CONGRESS_API_KEY");
-  return `${base}/${congress}/${safeLower(billType)}/${billNumber}?format=json&api_key=${encodeURIComponent(key)}`;
+  // /bill/{congress}/{billType}/{billNumber}
+  return `${base}/bill/${congress}/${safeLower(billType)}/${billNumber}?format=json&api_key=${encodeURIComponent(key)}`;
 }
 function buildBillActionsUrl(congress, billType, billNumber) {
   const base = mustEnv("CONGRESS_API_BASE").replace(/\/$/, "");
   const key = mustEnv("CONGRESS_API_KEY");
+  // /bill/{congress}/{billType}/{billNumber}/actions
   return `${base}/bill/${congress}/${safeLower(billType)}/${billNumber}/actions?format=json&api_key=${encodeURIComponent(
     key
   )}`;
@@ -348,7 +352,9 @@ async function typesenseImport(docs, collectionName, action) {
     }
   }
 
-  log(`Typesense import(action=${action}) ${fmtMs(dur)} => ${okIds.length} ok, ${failIds.length} failed (batch ${docs.length}) [${collectionName}]`);
+  log(
+    `Typesense import(action=${action}) ${fmtMs(dur)} => ${okIds.length} ok, ${failIds.length} failed (batch ${docs.length}) [${collectionName}]`
+  );
   if (failIds.length) warn(`Typesense sample errors [${collectionName}]:`, errors.slice(0, 5));
 
   return { okIds, failIds, errors };
@@ -575,7 +581,6 @@ function pickLatestActionFromActionsResponse(actionsJson) {
   const arr = actionsJson?.actions || actionsJson?.billActions || actionsJson?.results || actionsJson?.items || [];
   if (!Array.isArray(arr) || !arr.length) return null;
 
-  // pick max actionDate; if missing dates, fall back to last item
   let best = null;
   let bestEpoch = -1;
 
@@ -594,7 +599,6 @@ function normalizeStatusBucketLabel(s) {
   return t ? t : "Introduced";
 }
 
-// Congress.gov-ish buckets (labels exactly like your screenshot)
 const STATUS_BUCKETS = [
   "Introduced",
   "Committee Consideration",
@@ -617,22 +621,17 @@ function deriveStatusBucketFromActionType(actionType, actionText = "") {
 
   if (tl.includes("becamelaw") || txt.includes("became public law")) return "Became Law";
   if (tl.includes("veto")) return "Veto Actions";
-
-  // president-ish
   if (tl.includes("presented") || tl.includes("topresident") || txt.includes("presented to president")) return "To President";
   if (tl.includes("signed") && (txt.includes("signed by president") || txt.includes("signed"))) return "Became Law";
 
-  // passed/failed
   if (tl.includes("passedboth") || tl.includes("passed both")) return "Passed Both Chambers";
   if (tl.includes("passed") && (tl.includes("house") || tl.includes("senate"))) return "Passed One Chamber";
   if (tl.includes("fail") || txt.includes("failed")) return "Failed One Chamber";
 
-  // committees/floor/conference-ish (best-effort)
   if (tl.includes("committee") || txt.includes("committee")) return "Committee Consideration";
   if (tl.includes("floor") || txt.includes("on passage") || txt.includes("consideration")) return "Floor Consideration";
   if (tl.includes("conference") || txt.includes("conference") || tl.includes("resolv")) return "Resolving Differences";
 
-  // default best-effort
   return "Introduced";
 }
 
@@ -647,7 +646,16 @@ async function fetchStatusFromActions({ congress, billType, billNumber }) {
   return { status_action_type, status, latest_action_text };
 }
 
-async function classifyStatusWithOpenAI({ openai, model, billId, title, chamber, latest_action_text, official_summary, status_action_type }) {
+async function classifyStatusWithOpenAI({
+  openai,
+  model,
+  billId,
+  title,
+  chamber,
+  latest_action_text,
+  official_summary,
+  status_action_type
+}) {
   const input = [
     `BILL ID: ${billId}`,
     title ? `TITLE: ${title}` : "",
@@ -655,34 +663,36 @@ async function classifyStatusWithOpenAI({ openai, model, billId, title, chamber,
     status_action_type ? `LATEST ACTION TYPE: ${status_action_type}` : "",
     latest_action_text ? `LATEST ACTION TEXT: ${latest_action_text}` : "",
     official_summary ? `OFFICIAL SUMMARY: ${truncate(official_summary, 1500)}` : ""
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const resp = await openaiWithRetry(
-    () => openai.responses.create({
-      model,
-      input: [
-        {
-          role: "system",
-          content: [
-            {
-              type: "input_text",
-              text:
-                "Classify this bill into exactly ONE of these status buckets:\n" +
-                STATUS_BUCKETS.map((x) => `- ${x}`).join("\n") +
-                "\n\nReturn ONLY the bucket text exactly as written. No extra words."
-            }
-          ]
-        },
-        { role: "user", content: [{ type: "input_text", text: input }] }
-      ]
-    }),
+    () =>
+      openai.responses.create({
+        model,
+        input: [
+          {
+            role: "system",
+            content: [
+              {
+                type: "input_text",
+                text:
+                  "Classify this bill into exactly ONE of these status buckets:\n" +
+                  STATUS_BUCKETS.map((x) => `- ${x}`).join("\n") +
+                  "\n\nReturn ONLY the bucket text exactly as written. No extra words."
+              }
+            ]
+          },
+          { role: "user", content: [{ type: "input_text", text: input }] }
+        ]
+      }),
     { label: `status_classify ${billId}`, retries: 4 }
   );
 
   const out = String(resp.output_text || "").trim();
   if (STATUS_BUCKETS.includes(out)) return out;
 
-  // tolerant fallback: match ignoring case
   const found = STATUS_BUCKETS.find((b) => b.toLowerCase() === out.toLowerCase());
   return found || "Introduced";
 }
@@ -743,7 +753,12 @@ async function flushStatusBatch({ docs, collectionName, failedQueue }) {
       if (okSet.has(id)) {
         clearFailure(failedQueue, id);
       } else if (failSet.has(id)) {
-        recordFailure(failedQueue, id, "typesense_update_status", (r.errors || []).join(" | ") || "Typesense update failed");
+        recordFailure(
+          failedQueue,
+          id,
+          "typesense_update_status",
+          (r.errors || []).join(" | ") || "Typesense update failed"
+        );
       } else {
         recordFailure(failedQueue, id, "typesense_update_status", "Typesense update result missing id mapping");
       }
@@ -826,12 +841,11 @@ async function buildBillDocAndStateUpdate({ openai, summaryModel, embedModel, it
     warn(`Actions/status fetch failed for ${billId}: ${String(e.message || e)}`);
   }
 
-  // If status missing, try OpenAI classify into bucket list
   if (!status) {
     try {
       status = await classifyStatusWithOpenAI({
         openai,
-        model: summaryModel, // reuse your summary model
+        model: summaryModel,
         billId,
         title,
         chamber,
@@ -953,7 +967,6 @@ async function buildStatusOnlyUpdate({ openai, summaryModel, billId }) {
 
   const { congress, type, number } = parsed;
 
-  // Pull detail for title/chamber context (cheap-ish + useful for OpenAI fallback)
   const detailUrl = buildBillDetailUrl(congress, type, number);
   const detailJson = await fetchJson(detailUrl, { label: "DETAIL", retries: 3 });
 
