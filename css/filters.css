@@ -1,121 +1,147 @@
-/* ---------------------------------------------------
-   Filters UI (Accordion multi-check)
-   - No Bootstrap dependency
-   - Designed to work with the markup rendered by ai-search.js
---------------------------------------------------- */
+/* Filters (custom accordion UI) */
 
-.filters-grid {
-  display: grid;
-  gap: 14px;
-}
-
-.filters-actions {
+.filters {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.filter-acc {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  justify-content: flex-start;
 }
 
-.results-grid {
-  display: grid;
-  grid-template-columns: 340px 1fr;
-  gap: 18px;
-  align-items: start;
-}
-
-@media (max-width: 980px) {
-  .results-grid { grid-template-columns: 1fr; }
-}
-
-/* Accordion item (uses <details>) */
 .filter-acc__item {
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.06);
   overflow: hidden;
 }
 
-/* Separate stacked items */
-.filter-acc__item + .filter-acc__item { margin-top: 12px; }
-
 .filter-acc__toggle {
   list-style: none;
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px 14px;
+  padding: 14px 16px;
+  cursor: pointer;
   user-select: none;
 }
 
+/* Hide default disclosure triangle */
 .filter-acc__toggle::-webkit-details-marker { display: none; }
+.filter-acc__toggle::marker { content: ""; }
 
 .filter-acc__label {
   font-weight: 700;
   font-size: 14px;
 }
 
-.filter-acc__chev {
-  width: 10px;
-  height: 10px;
-  border-right: 2px solid var(--color-muted);
-  border-bottom: 2px solid var(--color-muted);
-  transform: rotate(45deg);
-  transition: transform 0.15s ease;
-  flex: 0 0 auto;
+.filter-acc__badge {
+  margin-left: auto;
+  font-size: 12px;
+  color: #111827;
+  background: rgba(0,0,0,0.05);
+  border: 1px solid rgba(0,0,0,0.08);
+  padding: 4px 8px;
+  border-radius: 999px;
+  min-width: 28px;
+  text-align: center;
 }
 
-/* Rotate chevron when open (also works without JS) */
-.filter-acc__item[open] .filter-acc__chev { transform: rotate(-135deg); }
+.filter-acc__badge:empty {
+  display: none;
+}
+
+.filter-acc__chev {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.04);
+  transition: transform .15s ease;
+}
+
+.filter-acc__item[open] .filter-acc__chev {
+  transform: rotate(180deg);
+}
 
 .filter-acc__panel {
-  border-top: 1px solid var(--color-border);
-  padding: 12px 14px 14px 14px;
+  border-top: 1px solid #e5e7eb;
 }
 
-/* Options list */
 .filter-acc__body {
-  display: grid;
-  gap: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow: auto;
 }
 
+/* Option row */
 .filter-opt {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 10px;
+  padding: 8px 10px;
   border-radius: 12px;
 }
 
-.filter-opt:hover { background: rgba(0,0,0,0.03); }
+.filter-opt:hover {
+  background: rgba(0,0,0,0.03);
+}
 
 .filter-opt input[type="checkbox"] {
-  width: 20px;
-  height: 20px;
-  accent-color: var(--color-primary);
-  cursor: pointer;
+  width: 18px;
+  height: 18px;
 }
 
-.filter-opt__text {
+.filter-opt__label {
   font-size: 14px;
-  color: var(--color-text);
-  line-height: 1.25;
 }
 
-/* Optional count pill (currently disabled in JS) */
 .filter-opt__count {
   margin-left: auto;
   font-size: 12px;
-  color: var(--color-muted);
-  background: rgba(0,0,0,0.04);
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 4px 8px;
+  color: #6b7280;
 }
 
-/* Make focus visible */
-.filter-acc__toggle:focus {
+/* Clear */
+.filters__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.filters__clear {
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.filters__clear:hover {
+  background: rgba(0,0,0,0.02);
+}
+
+/* --- Additions for jQuery slide animation --- */
+/* The panel is animated by jQuery; keep it hidden unless <details open> */
+.filter-acc__item:not([open]) .filter-acc__panel {
+  display: none;
+}
+
+/* Make the toggle feel like a control without affecting global .btn styles */
+.filter-acc__toggle:focus { outline: none; }
+.filter-acc__toggle:focus-visible {
   outline: 2px solid rgba(26,115,232,0.35);
   outline-offset: 2px;
+  border-radius: 14px;
 }
