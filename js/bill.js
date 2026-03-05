@@ -3,15 +3,39 @@
 
   const TYPESENSE_WORKER_BASE = "https://typesense-proxy-worker.colemandavis4.workers.dev";
   const OPENAI_WORKER_BASE = "https://openai-proxy-worker.colemandavis4.workers.dev";
+  const CONGRESS_WORKER_BASE = "https://congress-proxy.colemandavis4.workers.dev";
 
   const COLLECTION = (window.APP_CONFIG && window.APP_CONFIG.TYPESENSE_INDEX) || "congress_bills";
   const EMBED_MODEL = (window.APP_CONFIG && window.APP_CONFIG.OPENAI_EMBED_MODEL) || "text-embedding-3-large";
+  const ANSWER_MODEL = (window.APP_CONFIG && window.APP_CONFIG.OPENAI_ANSWER_MODEL) || "gpt-4o-mini";
   const DEFAULT_ALPHA = (window.APP_CONFIG && window.APP_CONFIG.HYBRID_ALPHA) || 0.65;
 
   const TS_DOCS_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
-  const TS_DOC_BY_ID_BASE = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents`;
   const TS_MULTI_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/multi_search`;
   const OA_EMBED_URL = `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/embeddings`;
+  const OA_RESPONSES_URL = `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/responses`;
+  const CONGRESS_PROXY_URL = `${CONGRESS_WORKER_BASE.replace(/\/$/, "")}/`;
+  const BILL_INCLUDE_FIELDS = [
+    "id",
+    "title",
+    "type",
+    "number",
+    "congress",
+    "chamber",
+    "status",
+    "committees",
+    "policy_area",
+    "subjects",
+    "sponsor_party",
+    "sponsor_state",
+    "cosponsor_count",
+    "introduced_date",
+    "update_date",
+    "latest_action_text",
+    "ai_summary_text",
+    "official_summary_text",
+    "official_summary"
+  ].join(",");
 
   function getParam(name) {
     const u = new URL(window.location.href);
@@ -61,59 +85,211 @@
     return t.split(/\s+/).map(w => w.slice(0, 1).toUpperCase() + w.slice(1)).join(" ");
   }
 
+  const billQaState = {
+    history: [],
+    currentDoc: null,
+    currentTextData: null
+  };
+
+  function parseTextToHtml(text) {
+    const raw = String(text || "");
+    const escaped = escHtml(raw);
+    const lines = escaped.split(/\r?\n/);
+    const out = [];
+    let inList = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const isBullet = trimmed.startsWith("- ") || trimmed.startsWith("• ");
+      if (isBullet) {
+        if (!inList) {
+          out.push('<ul style="margin:10px 0 0 18px; padding:0;">');
+          inList = true;
+        }
+        out.push(`<li style="margin:6px 0;">${trimmed.replace(/^(- |• )/, "")}</li>`);
+      } else {
+        if (inList) {
+          out.push("</ul>");
+          inList = false;
+        }
+        if (trimmed.length) out.push(`<p style="margin:10px 0; line-height:1.5;">${line}</p>`);
+      }
+    }
+
+    if (inList) out.push("</ul>");
+    return out.join("");
+  }
+
+  function parseBillId(id) {
+    const parts = String(id || "").trim().split("-").filter(Boolean);
+    if (parts.length < 3) return null;
+    const congress = Number.parseInt(parts[0], 10);
+    const number = Number.parseInt(parts[parts.length - 1], 10);
+    const type = parts.slice(1, parts.length - 1).join("-").toLowerCase();
+    if (!Number.isFinite(congress) || !Number.isFinite(number) || !type) return null;
+    return { congress, type, number };
+  }
+
+  function billTypeToSlug(type) {
+    const t = String(type || "").toLowerCase();
+    const map = {
+      hr: "house-bill",
+      s: "senate-bill",
+      hres: "house-resolution",
+      sres: "senate-resolution",
+      hjres: "house-joint-resolution",
+      sjres: "senate-joint-resolution",
+      hconres: "house-concurrent-resolution",
+      sconres: "senate-concurrent-resolution"
+    };
+    return map[t] || `${t}-bill`;
+  }
+
+  function congressGovBillUrl(doc) {
+    const parsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
+    if (!parsed) return "";
+    return `https://www.congress.gov/bill/${parsed.congress}th-congress/${billTypeToSlug(parsed.type)}/${parsed.number}`;
+  }
+
   async function fetchBillById(id) {
     const cleanId = String(id || "").trim();
     if (!cleanId) return null;
 
-    // Primary path: direct Typesense document fetch by id (e.g. 119-hr-4362)
-    const directUrl = `${TS_DOC_BY_ID_BASE}/${encodeURIComponent(cleanId)}`;
-    const directRes = await fetch(directUrl);
+    const parsed = (() => {
+      const parts = cleanId.split("-").filter(Boolean);
+      if (parts.length < 3) return null;
+      const congress = Number.parseInt(parts[0], 10);
+      const number = Number.parseInt(parts[parts.length - 1], 10);
+      const type = parts.slice(1, parts.length - 1).join("-").toLowerCase();
+      if (!Number.isFinite(congress) || !Number.isFinite(number) || !type) return null;
+      return { congress, number, type };
+    })();
 
-    if (directRes.ok) {
-      return await directRes.json();
+    async function runSearchAttempt(label, filterBy) {
+      const params = new URLSearchParams({
+        q: "*",
+        query_by: "title,ai_summary_text",
+        per_page: "1",
+        page: "1",
+        filter_by: filterBy,
+        include_fields: BILL_INCLUDE_FIELDS
+      });
+
+      const url = `${TS_DOCS_SEARCH}?${params.toString()}`;
+      console.info(`[bill] ${label}: GET ${url}`);
+      const res = await fetch(url);
+      const bodyText = await res.text().catch(() => "");
+      console.info(`[bill] ${label}: status ${res.status}`);
+
+      if (!res.ok) {
+        console.warn(`[bill] ${label}: failed response`, bodyText || "(no body)");
+        throw new Error(`${label} failed HTTP ${res.status}: ${bodyText || "(no body)"}`);
+      }
+
+      let json;
+      try {
+        json = bodyText ? JSON.parse(bodyText) : {};
+      } catch (parseErr) {
+        console.warn(`[bill] ${label}: invalid JSON`, parseErr);
+        throw new Error(`${label} returned invalid JSON.`);
+      }
+
+      const hits = json?.hits || [];
+      console.info(`[bill] ${label}: hits=${hits.length}`);
+      return hits[0]?.document || null;
     }
 
-    // Fallback path: search endpoint filtered by exact id
-    const params = new URLSearchParams({
-      q: "*",
-      query_by: "title,ai_summary_text",
-      per_page: "1",
-      page: "1",
-      filter_by: `id:=${escFilterVal(cleanId)}`,
-      include_fields: [
-        "id",
-        "title",
-        "type",
-        "number",
-        "congress",
-        "chamber",
-        "status",
-        "committees",
-        "policy_area",
-        "subjects",
-        "sponsor_party",
-        "sponsor_state",
-        "cosponsor_count",
-        "introduced_date",
-        "update_date",
-        "latest_action_text",
-        "ai_summary_text",
-        "official_summary_text",
-        "official_summary"
-      ].join(",")
+    const directAttempts = [
+      { label: "exact-id-search", filterBy: `id:=${escFilterVal(cleanId)}` },
+      { label: "lowercase-id-search", filterBy: `id:=${escFilterVal(cleanId.toLowerCase())}` }
+    ];
+
+    if (parsed) {
+      directAttempts.push(
+        {
+          label: "bill-fields-search",
+          filterBy: `congress:=${parsed.congress} && type:=${escFilterVal(parsed.type)} && number:=${parsed.number}`
+        },
+        {
+          label: "bill-fields-uppercase-type-search",
+          filterBy: `congress:=${parsed.congress} && type:=${escFilterVal(parsed.type.toUpperCase())} && number:=${parsed.number}`
+        }
+      );
+    }
+
+    const uniqueAttempts = directAttempts.filter((attempt, i, arr) =>
+      attempt.filterBy && arr.findIndex((a) => a.filterBy === attempt.filterBy) === i
+    );
+
+    let lastError = null;
+    for (const attempt of uniqueAttempts) {
+      try {
+        const doc = await runSearchAttempt(attempt.label, attempt.filterBy);
+        if (doc) {
+          console.info(`[bill] ${attempt.label}: found document`, doc.id);
+          return doc;
+        }
+        console.info(`[bill] ${attempt.label}: no matching document`);
+      } catch (err) {
+        lastError = err;
+        console.warn(`[bill] ${attempt.label}: lookup error`, err);
+      }
+    }
+
+    const multiSearchBody = {
+      searches: uniqueAttempts.map((attempt) => ({
+        collection: COLLECTION,
+        q: "*",
+        query_by: "title,ai_summary_text",
+        per_page: 1,
+        page: 1,
+        filter_by: attempt.filterBy,
+        include_fields: BILL_INCLUDE_FIELDS
+      }))
+    };
+
+    if (!multiSearchBody.searches.length) return null;
+
+    console.info("[bill] multi-search-fallback: POST", multiSearchBody);
+    const multiRes = await fetch(TS_MULTI_SEARCH, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(multiSearchBody)
     });
 
-    const searchRes = await fetch(`${TS_DOCS_SEARCH}?${params.toString()}`);
-    if (!searchRes.ok) {
-      const directErr = await directRes.text().catch(() => "(no body)");
-      const searchErr = await searchRes.text().catch(() => "(no body)");
-      throw new Error(`Bill lookup failed (direct ${directRes.status} / search ${searchRes.status}): ${directErr} :: ${searchErr}`);
+    const multiBodyText = await multiRes.text().catch(() => "");
+    console.info(`[bill] multi-search-fallback: status ${multiRes.status}`);
+    if (!multiRes.ok) {
+      console.warn("[bill] multi-search-fallback: failed response", multiBodyText || "(no body)");
+      const lastErrMsg = lastError ? ` Previous error: ${lastError.message}` : "";
+      throw new Error(`multi-search-fallback failed HTTP ${multiRes.status}: ${multiBodyText || "(no body)"}.${lastErrMsg}`);
     }
 
-    const json = await searchRes.json();
-    const hit = (json?.hits || [])[0];
-    return hit?.document || null;
+    let multiJson;
+    try {
+      multiJson = multiBodyText ? JSON.parse(multiBodyText) : {};
+    } catch (parseErr) {
+      console.warn("[bill] multi-search-fallback: invalid JSON", parseErr);
+      throw new Error("multi-search-fallback returned invalid JSON.");
+    }
+
+    const results = multiJson?.results || [];
+    console.info(`[bill] multi-search-fallback: results=${results.length}`);
+    for (let i = 0; i < results.length; i += 1) {
+      const resultHits = results[i]?.hits || [];
+      console.info(`[bill] multi-search-fallback: result[${i}] hits=${resultHits.length}`);
+      if (resultHits[0]?.document) {
+        console.info("[bill] multi-search-fallback: found document", resultHits[0].document.id);
+        return resultHits[0].document;
+      }
+    }
+
+    if (lastError) {
+      console.warn("[bill] lookup completed with prior errors and no document match", lastError);
+    }
+    return null;
   }
+
 
   async function embedText(text) {
     const res = await fetch(OA_EMBED_URL, {
@@ -177,7 +353,7 @@
     return (json?.results?.[0]?.hits || []).map(h => h.document).filter(Boolean);
   }
 
-  function renderBillDetail(doc) {
+  function renderBillDetail(doc, congressUrlOverride) {
     const mount = document.getElementById("billMain");
     if (!mount) return;
 
@@ -190,8 +366,8 @@
     const committee = Array.isArray(doc.committees) && doc.committees.length ? doc.committees[0] : "";
     const partyLabel = sponsorPartyLabel(doc.sponsor_party);
     const partyClass = sponsorDotClass(doc.sponsor_party);
-
     const officialSummary = doc.official_summary_text || doc.official_summary || "Official summary unavailable in index data.";
+    const congressUrl = congressUrlOverride || congressGovBillUrl(doc);
 
     mount.innerHTML = `
       <div class="panel__body">
@@ -205,18 +381,15 @@
 
           <h1 class="bill-detail__title">${escHtml(doc.title || "(Untitled bill)")}</h1>
 
-          <div class="billcard__tagwrap">
-            ${doc.chamber ? `<span class="chip billcard__tag">${escHtml(doc.chamber)}</span>` : ""}
-            ${doc.congress ? `<span class="chip billcard__tag">${escHtml(String(doc.congress))}th Congress</span>` : ""}
-            ${committee ? `<span class="chip billcard__tag">${escHtml(committee)}</span>` : ""}
-            ${doc.policy_area ? `<span class="chip billcard__tag">${escHtml(doc.policy_area)}</span>` : ""}
-            <span class="chip billcard__tag">${escHtml(partyLabel)}</span>
-          </div>
-
-          <div class="bill-detail__meta muted">
-            ${doc.sponsor_state ? `Sponsor state: ${escHtml(doc.sponsor_state)} • ` : ""}
-            ${Number.isFinite(doc.cosponsor_count) ? `Cosponsors: ${escHtml(String(doc.cosponsor_count))} • ` : ""}
-            Updated: ${escHtml(epochToDate(doc.update_date) || "N/A")}
+          <div class="bill-detail__facts">
+            ${doc.chamber ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Chamber</div><div class="bill-detail__fact-value">${escHtml(doc.chamber)}</div></div>` : ""}
+            ${doc.congress ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Congress</div><div class="bill-detail__fact-value">${escHtml(String(doc.congress))}th Congress</div></div>` : ""}
+            ${committee ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Committee</div><div class="bill-detail__fact-value">${escHtml(committee)}</div></div>` : ""}
+            ${doc.policy_area ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Policy area</div><div class="bill-detail__fact-value">${escHtml(doc.policy_area)}</div></div>` : ""}
+            <div class="bill-detail__fact"><div class="bill-detail__fact-label">Sponsor party</div><div class="bill-detail__fact-value">${escHtml(partyLabel)}</div></div>
+            ${Number.isFinite(doc.cosponsor_count) ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Cosponsors</div><div class="bill-detail__fact-value">${escHtml(String(doc.cosponsor_count))}</div></div>` : ""}
+            <div class="bill-detail__fact"><div class="bill-detail__fact-label">Updated</div><div class="bill-detail__fact-value">${escHtml(epochToDate(doc.update_date) || "N/A")}</div></div>
+            ${doc.status ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Status</div><div class="bill-detail__fact-value">${escHtml(titleCaseFromToken(doc.status))}</div></div>` : ""}
           </div>
 
           <section class="bill-detail__section">
@@ -235,10 +408,294 @@
               <p class="bill-detail__summary">${escHtml(doc.latest_action_text)}</p>
             </section>
           ` : ""}
+
+          ${congressUrl ? `<div class="bill-detail__actions"><a class="bill-detail__button" href="${escHtml(congressUrl)}" target="_blank" rel="noopener noreferrer">View on Congress.gov</a></div>` : ""}
         </article>
       </div>
     `;
   }
+
+  async function fetchCongressJson(path, params = {}) {
+    const url = new URL(CONGRESS_PROXY_URL);
+    url.searchParams.set("path", path);
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
+    });
+
+    console.info("[bill-text] GET", url.toString());
+    const res = await fetch(url.toString());
+    const text = await res.text().catch(() => "");
+    console.info(`[bill-text] status ${res.status} for ${path}`);
+    if (!res.ok) throw new Error(`Congress proxy failed HTTP ${res.status}: ${text || "(no body)"}`);
+
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (e) {
+      throw new Error(`Congress proxy returned invalid JSON for ${path}`);
+    }
+  }
+
+  async function fetchCongressPermalink(doc) {
+    const parsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
+    const fallback = congressGovBillUrl(doc);
+    if (!parsed) return fallback;
+
+    try {
+      const json = await fetchCongressJson(`/v3/bill/${parsed.congress}/${parsed.type}/${parsed.number}`, { format: "json" });
+      const candidate = json?.bill?.url || json?.url || "";
+      if (candidate && /^https:\/\/www\.congress\.gov\//i.test(candidate)) {
+        console.info("[bill] congress permalink from API", candidate);
+        return candidate;
+      }
+    } catch (e) {
+      console.warn("[bill] congress permalink lookup failed; using fallback", e);
+    }
+
+    return fallback;
+  }
+
+  async function fetchHtmlDocumentFromUrl(rawUrl) {
+    if (!rawUrl) return "";
+
+    const parsed = new URL(rawUrl);
+    let fetchUrl = rawUrl;
+
+    if (parsed.hostname === "api.congress.gov") {
+      const proxy = new URL(CONGRESS_PROXY_URL);
+      proxy.searchParams.set("path", parsed.pathname);
+      parsed.searchParams.forEach((v, k) => {
+        if (k !== "api_key") proxy.searchParams.set(k, v);
+      });
+      fetchUrl = proxy.toString();
+    }
+
+    console.info("[bill-text] GET html", fetchUrl);
+    const res = await fetch(fetchUrl, { headers: { Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" } });
+    const html = await res.text().catch(() => "");
+    console.info(`[bill-text] html status ${res.status}`);
+    if (!res.ok) throw new Error(`HTML fetch failed HTTP ${res.status}`);
+
+    return html;
+  }
+
+  async function fetchBillText(doc) {
+    const parsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
+    if (!parsed) return null;
+
+    const indexData = await fetchCongressJson(`/v3/bill/${parsed.congress}/${parsed.type}/${parsed.number}/text`, { format: "json", limit: 5 });
+    const versions = indexData?.textVersions || indexData?.bill?.textVersions || [];
+    if (!Array.isArray(versions) || !versions.length) {
+      return { summary: "No bill text versions were returned by Congress.gov.", html: "", pdfUrl: "" };
+    }
+
+    const latest = versions[0] || {};
+    const textFormats = Array.isArray(latest.formats) ? latest.formats : [];
+    const htmlFormat = textFormats.find((f) => /formatted\s*text|html/i.test(String(f?.type || f?.format || ""))) || textFormats.find((f) => /htm/i.test(String(f?.url || ""))) || null;
+    const pdfFormat = textFormats.find((f) => /pdf/i.test(String(f?.type || f?.format || ""))) || textFormats.find((f) => /\.pdf(\?|$)/i.test(String(f?.url || ""))) || null;
+
+    let html = "";
+    if (htmlFormat?.url) {
+      try {
+        html = await fetchHtmlDocumentFromUrl(htmlFormat.url);
+      } catch (e) {
+        console.warn("[bill-text] formatted HTML fetch failed", e);
+      }
+    }
+
+    const issued = latest?.date || latest?.issuedOn || latest?.updateDate || "";
+    const title = latest?.type || latest?.name || "Latest version";
+    const summary = `${title}${issued ? ` • ${issued}` : ""}`;
+
+    return {
+      summary,
+      html,
+      pdfUrl: pdfFormat?.url || ""
+    };
+  }
+
+  function renderBillText(textData, doc) {
+    const mount = document.getElementById("billFullText");
+    if (!mount) return;
+
+    if (!doc) {
+      mount.innerHTML = `<div class="panel__head"><div class="panel__title">Bill text</div></div><div class="panel__body"><div class="muted">Load a bill to view text metadata.</div></div>`;
+      return;
+    }
+
+    if (!textData) {
+      mount.innerHTML = `<div class="panel__head"><div class="panel__title">Bill text</div></div><div class="panel__body"><div class="muted">No bill text data found.</div></div>`;
+      return;
+    }
+
+    const pdfButton = textData.pdfUrl
+      ? `<a class="bill-text__pdfbtn" href="${escHtml(textData.pdfUrl)}" target="_blank" rel="noopener noreferrer">Open PDF</a>`
+      : "";
+
+    const bodyHtml = textData.html
+      ? `<div class="bill-text__html">${textData.html}</div>`
+      : `<p class="bill-text__content">${escHtml(textData.summary || "Bill text loaded, but formatted HTML was unavailable.")}</p>`;
+
+    mount.innerHTML = `
+      <div class="panel__head bill-text__head">
+        <div class="panel__title">Bill text</div>
+        ${pdfButton}
+      </div>
+      <div class="panel__body">
+        <section class="bill-qa">
+          <div class="bill-qa__title">Ask a question about the bill</div>
+          <div id="billQaMessages" class="bill-qa__messages">
+            <div class="bill-qa__row bill-qa__row--assistant">
+              <div class="bill-qa__bubble bill-qa__bubble--assistant muted">Ask a question to get a bill-specific answer.</div>
+            </div>
+          </div>
+          <form id="billQaForm" class="bill-qa__form">
+            <input id="billQaInput" class="bill-qa__input" type="text" autocomplete="off" placeholder="Ask about this bill…" />
+            <button type="submit" class="bill-qa__btn">Ask</button>
+          </form>
+        </section>
+        ${bodyHtml}
+      </div>
+    `;
+
+    wireBillQa(doc, textData);
+  }
+
+
+  async function generateBillAnswer({ doc, textData, question, history }) {
+    const textSnippet = String(textData?.html || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 10000);
+
+    const prior = (history || [])
+      .slice(-6)
+      .map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.text}`)
+      .join("\n");
+
+    const prompt = [
+      `Bill id: ${doc?.id || "unknown"}`,
+      `Title: ${doc?.title || ""}`,
+      `Status: ${doc?.status ? titleCaseFromToken(doc.status) : "Unknown"}`,
+      `Sponsor party: ${sponsorPartyLabel(doc?.sponsor_party)}`,
+      `Sponsor state: ${doc?.sponsor_state || ""}`,
+      `Committee: ${Array.isArray(doc?.committees) && doc.committees.length ? doc.committees[0] : ""}`,
+      `Policy area: ${doc?.policy_area || ""}`,
+      `Cosponsors: ${Number.isFinite(doc?.cosponsor_count) ? doc.cosponsor_count : "Unknown"}`,
+      `Latest action: ${doc?.latest_action_text || ""}`,
+      `AI summary: ${doc?.ai_summary_text || ""}`,
+      `Official summary: ${doc?.official_summary_text || doc?.official_summary || ""}`,
+      `Bill text version: ${textData?.summary || ""}`,
+      textSnippet ? `Bill text excerpt: ${textSnippet}` : "",
+      prior ? `Conversation so far:
+${prior}` : "",
+      `User question: ${question}`,
+      "Answer clearly and concisely. If unknown from the provided bill context, say so."
+    ].filter(Boolean).join("\n\n");
+
+    const res = await fetch(OA_RESPONSES_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: ANSWER_MODEL,
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: "You are a helpful legislative assistant focused on a single bill." }]
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: prompt }]
+          }
+        ],
+        temperature: 0.2
+      })
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "(no body)");
+      throw new Error(`Bill answer failed HTTP ${res.status}: ${txt}`);
+    }
+
+    const json = await res.json();
+    const out = json?.output || [];
+    let text = "";
+    for (const item of out) {
+      const content = item?.content || [];
+      for (const part of content) {
+        if (part?.type === "output_text" && part?.text) text += part.text;
+      }
+    }
+    return String(text || "").trim();
+  }
+
+  function appendBillQaMessage(role, text, pending) {
+    const mount = document.getElementById("billQaMessages");
+    if (!mount) return null;
+
+    const row = document.createElement("div");
+    row.className = `bill-qa__row ${role === "user" ? "bill-qa__row--user" : "bill-qa__row--assistant"}`;
+
+    const bubble = document.createElement("div");
+    bubble.className = `bill-qa__bubble ${role === "user" ? "bill-qa__bubble--user" : "bill-qa__bubble--assistant"}`;
+    if (pending) {
+      bubble.innerHTML = `<span class="muted">${escHtml(text || "Thinking…")}</span>`;
+    } else if (role === "user") {
+      bubble.textContent = String(text || "");
+    } else {
+      bubble.innerHTML = window.simpleMarkdownToHTML ? window.simpleMarkdownToHTML(text || "") : parseTextToHtml(text || "");
+    }
+
+    row.appendChild(bubble);
+    mount.appendChild(row);
+    mount.scrollTop = mount.scrollHeight;
+    return bubble;
+  }
+
+  function wireBillQa(doc, textData) {
+    billQaState.currentDoc = doc;
+    billQaState.currentTextData = textData;
+    billQaState.history = [];
+
+    const askForm = document.getElementById("billQaForm");
+    const askInput = document.getElementById("billQaInput");
+    const messages = document.getElementById("billQaMessages");
+    if (!askForm || !askInput || !messages) return;
+
+    askForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const q = String(askInput.value || "").trim();
+      if (!q) return;
+      askInput.value = "";
+
+      appendBillQaMessage("user", q);
+      const pendingBubble = appendBillQaMessage("assistant", "Generating answer…", true);
+
+      try {
+        const answer = await generateBillAnswer({
+          doc: billQaState.currentDoc,
+          textData: billQaState.currentTextData,
+          question: q,
+          history: billQaState.history
+        });
+
+        billQaState.history.push({ role: "user", text: q });
+        billQaState.history.push({ role: "assistant", text: answer });
+
+        if (pendingBubble) {
+          pendingBubble.innerHTML = window.simpleMarkdownToHTML
+            ? window.simpleMarkdownToHTML(answer || "")
+            : parseTextToHtml(answer || "");
+        }
+      } catch (err) {
+        console.warn("[bill-qa] failed", err);
+        if (pendingBubble) pendingBubble.innerHTML = `<span class="muted">I couldn't answer that right now. Please try again.</span>`;
+      }
+    });
+  }
+
 
   function renderRelated(list) {
     const mount = document.getElementById("relatedBills");
@@ -257,10 +714,10 @@
           <span class="${partyClass} related-item__dot" aria-hidden="true"></span>
           <div class="related-item__top">
             <span class="chip billcard__tag">${escHtml(short)}</span>
-            <span class="muted">${escHtml(epochToDate(d.update_date))}</span>
-          </div>
+            </div>
           <div class="related-item__title">${escHtml(d.title || "(Untitled bill)")}</div>
           ${d.status ? `<div class="related-item__sub muted">${escHtml(titleCaseFromToken(d.status))}</div>` : ""}
+          <div class="related-item__date muted">${escHtml(epochToDate(d.update_date) || "")}</div>
         </a>
       `;
     }).join("");
@@ -270,6 +727,7 @@
     const id = getParam("id");
     if (!id) {
       renderBillDetail(null);
+      renderBillText(null, null);
       const mount = document.getElementById("relatedBills");
       if (mount) mount.innerHTML = `<div class="muted">Add ?id=... to the URL to load a bill.</div>`;
       return;
@@ -277,8 +735,21 @@
 
     try {
       const doc = await fetchBillById(id);
-      renderBillDetail(doc);
-      if (!doc) return;
+      if (!doc) {
+        renderBillDetail(null);
+        return;
+      }
+
+      const congressPermalink = await fetchCongressPermalink(doc);
+      renderBillDetail(doc, congressPermalink);
+
+      try {
+        const textData = await fetchBillText(doc);
+        renderBillText(textData, doc);
+      } catch (textErr) {
+        console.warn("[bill-text] failed to load bill text", textErr);
+        renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", html: "", pdfUrl: "" }, doc);
+      }
 
       const related = await fetchRelatedBills(doc);
       renderRelated(related);
@@ -286,6 +757,8 @@
       console.error(e);
       const main = document.getElementById("billMain");
       if (main) main.innerHTML = `<div class="panel__body"><div class="muted">Failed to load bill details.</div></div>`;
+      const textMount = document.getElementById("billFullText");
+      if (textMount) textMount.innerHTML = `<div class="panel__head"><div class="panel__title">Bill text</div></div><div class="panel__body"><div class="muted">Failed to load bill text.</div></div>`;
       const rail = document.getElementById("relatedBills");
       if (rail) rail.innerHTML = `<div class="muted">Failed to load related bills.</div>`;
     }
