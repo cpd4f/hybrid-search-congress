@@ -9,6 +9,7 @@
   const DEFAULT_ALPHA = (window.APP_CONFIG && window.APP_CONFIG.HYBRID_ALPHA) || 0.65;
 
   const TS_DOCS_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
+  const TS_DOC_BY_ID_BASE = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents`;
   const TS_MULTI_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/multi_search`;
   const OA_EMBED_URL = `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/embeddings`;
 
@@ -61,12 +62,24 @@
   }
 
   async function fetchBillById(id) {
+    const cleanId = String(id || "").trim();
+    if (!cleanId) return null;
+
+    // Primary path: direct Typesense document fetch by id (e.g. 119-hr-4362)
+    const directUrl = `${TS_DOC_BY_ID_BASE}/${encodeURIComponent(cleanId)}`;
+    const directRes = await fetch(directUrl);
+
+    if (directRes.ok) {
+      return await directRes.json();
+    }
+
+    // Fallback path: search endpoint filtered by exact id
     const params = new URLSearchParams({
       q: "*",
       query_by: "title,ai_summary_text",
       per_page: "1",
       page: "1",
-      filter_by: `id:=${escFilterVal(id)}`,
+      filter_by: `id:=${escFilterVal(cleanId)}`,
       include_fields: [
         "id",
         "title",
@@ -90,12 +103,14 @@
       ].join(",")
     });
 
-    const res = await fetch(`${TS_DOCS_SEARCH}?${params.toString()}`);
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "(no body)");
-      throw new Error(`Bill lookup failed HTTP ${res.status}: ${txt}`);
+    const searchRes = await fetch(`${TS_DOCS_SEARCH}?${params.toString()}`);
+    if (!searchRes.ok) {
+      const directErr = await directRes.text().catch(() => "(no body)");
+      const searchErr = await searchRes.text().catch(() => "(no body)");
+      throw new Error(`Bill lookup failed (direct ${directRes.status} / search ${searchRes.status}): ${directErr} :: ${searchErr}`);
     }
-    const json = await res.json();
+
+    const json = await searchRes.json();
     const hit = (json?.hits || [])[0];
     return hit?.document || null;
   }
