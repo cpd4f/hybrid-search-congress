@@ -281,7 +281,7 @@
     return parts.join(" && ");
   }
 
-  /* ---------------- Filter UI (dropdown multi-check) ---------------- */
+  /* ---------------- Filter UI (accordion multi-check) ---------------- */
 
   function ensureFiltersUI() {
     const mount = document.getElementById("filtersMount");
@@ -292,12 +292,14 @@
 
     mount.innerHTML = `
       <div class="filters">
-        ${renderDropdown("chamber", "Chamber")}
-        ${renderDropdown("committees", "Committee")}
-        ${renderDropdown("policy_area", "Policy area")}
-        ${renderDropdown("sponsor_party", "Sponsor party")}
-        ${renderDropdown("status", "Status")}
-        ${renderDropdown("update_range", "Updated")}
+        <div class="filter-acc" id="filtersAccordion">
+          ${renderAccordionItem("chamber", "Chamber")}
+          ${renderAccordionItem("committees", "Committee")}
+          ${renderAccordionItem("policy_area", "Policy area")}
+          ${renderAccordionItem("sponsor_party", "Sponsor party")}
+          ${renderAccordionItem("status", "Status")}
+          ${renderAccordionItem("update_range", "Updated")}
+        </div>
 
         <div class="filters__actions">
           <button type="button" class="filters__clear" id="clearFiltersBtn">Clear filters</button>
@@ -305,26 +307,22 @@
       </div>
     `;
 
-    // Toggle open/close
-    mount.addEventListener("click", function (ev) {
-      const toggle = ev.target.closest(".filter-dd__toggle");
-      if (toggle) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        const dd = toggle.closest(".filter-dd");
-        if (!dd) return;
-        const open = dd.classList.contains("is-open");
-        closeAllDropdowns(mount);
-        if (!open) dd.classList.add("is-open");
-        return;
-      }
-    });
+    // Accordion behavior: keep at most one open at a time
+    mount.addEventListener(
+      "toggle",
+      function (ev) {
+        const details = ev.target;
+        if (!(details instanceof HTMLDetailsElement)) return;
+        if (!details.classList.contains("filter-acc__item")) return;
+        if (!details.open) return;
 
-    // Click outside closes dropdowns
-    document.addEventListener("click", function (ev) {
-      const inFilters = ev.target && ev.target.closest && ev.target.closest("#filtersMount");
-      if (!inFilters) closeAllDropdowns(mount);
-    });
+        const all = mount.querySelectorAll(".filter-acc__item");
+        all.forEach((d) => {
+          if (d !== details) d.open = false;
+        });
+      },
+      true
+    );
 
     // Change events (checkbox/radio)
     mount.addEventListener("change", function (ev) {
@@ -382,24 +380,20 @@
     updateAllBadges();
   }
 
-  function closeAllDropdowns(mount) {
-    mount.querySelectorAll(".filter-dd").forEach(dd => dd.classList.remove("is-open"));
-  }
-
-  function renderDropdown(key, label) {
+  function renderAccordionItem(key, label) {
     return `
-      <div class="filter-dd" data-key="${escHtml(key)}">
-        <button type="button" class="filter-dd__toggle">
-          <span class="filter-dd__label">${escHtml(label)}</span>
-          <span class="filter-dd__badge" data-badge="${escHtml(key)}"></span>
-          <span class="filter-dd__chev">▾</span>
-        </button>
-        <div class="filter-dd__panel">
-          <div class="filter-dd__body" data-options="${escHtml(key)}">
+      <details class="filter-acc__item" data-key="${escHtml(key)}">
+        <summary class="filter-acc__toggle">
+          <span class="filter-acc__label">${escHtml(label)}</span>
+          <span class="filter-acc__badge" data-badge="${escHtml(key)}"></span>
+          <span class="filter-acc__chev" aria-hidden="true">▾</span>
+        </summary>
+        <div class="filter-acc__panel">
+          <div class="filter-acc__body" data-options="${escHtml(key)}">
             <div class="muted">Loading…</div>
           </div>
         </div>
-      </div>
+      </details>
     `;
   }
 
@@ -662,7 +656,7 @@
       "TASK:",
       "1) Provide a short answer (2–4 sentences).",
       "2) Provide 3–6 bullet points that reference specific bills by bill code (e.g., HR 123) when possible.",
-      "3) Add a “Sources” line listing the bill codes you relied on.",
+      "Do NOT add a Sources/Source bills line. The UI shows clickable source links separately.",
       "",
       "Return text only (no markdown tables)."
     ].filter(Boolean).join("\n");
@@ -694,7 +688,13 @@
       "";
 
     if (!text) throw new Error("Answer response missing text");
-    return text;
+
+    // Some models still append a "Sources:" line. Strip it to avoid duplicates with our UI links.
+    const cleaned = String(text)
+      .replace(/\n\s*(Sources?|Source bills?)\s*:\s*.*$/i, "")
+      .trim();
+
+    return cleaned;
   }
 
   /* ---------------- Typesense recent bills (GET) ---------------- */
@@ -715,6 +715,7 @@
         "congress",
         "update_date",
         "latest_action_text",
+        "status",
         "committees",
         "sponsor_party",
         "sponsor_state"
@@ -923,6 +924,7 @@
         const committee = firstCommittee(d.committees);
         const updated = epochToDate(d.update_date);
         const dot = sponsorDotClass(d.sponsor_party);
+        const status = d.status ? titleCaseFromToken(d.status) : "";
 
         return `
           <a class="billcard" href="./bill.html?id=${encodeURIComponent(d.id)}">
@@ -930,7 +932,7 @@
 
             <div class="billcard__meta">
               <div class="billcard__id">${escHtml(billShortId(d))}</div>
-              <div class="billcard__status">${escHtml(d.chamber || "")}${d.congress ? " • " + escHtml(String(d.congress)) + "th" : ""}</div>
+              <div class="billcard__status">${escHtml(d.chamber || "")}${d.congress ? " • " + escHtml(String(d.congress)) + "th" : ""}${status ? " • " + escHtml(status) : ""}</div>
             </div>
 
             <div class="billcard__title">${escHtml(d.title || "")}</div>
