@@ -808,7 +808,16 @@
 
   function ensureAnswerUI() {
     const mount = document.getElementById("aiAnswer");
+    const headActions = document.getElementById("aiAnswerHeadActions");
     if (!mount) return;
+
+    if (headActions && !headActions.querySelector("#aiRefreshBtn")) {
+      headActions.innerHTML = `
+        <button type="button" id="aiRefreshBtn" class="search__btn" style="padding:10px 14px; height:auto;">
+          Refresh summary
+        </button>
+      `;
+    }
 
     if (mount.querySelector("[data-ai-answer-ui='1']")) return;
 
@@ -816,12 +825,6 @@
       <div data-ai-answer-ui="1">
         <div id="aiAnswerBody" class="muted" style="line-height:1.5;">
           Ask a question above to get a plain-English answer.
-        </div>
-
-        <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
-          <button type="button" id="aiRefreshBtn" class="search__btn" style="padding:10px 14px;">
-            Refresh summary
-          </button>
         </div>
 
         <form id="aiFollowUpForm" style="margin-top:14px;">
