@@ -137,7 +137,7 @@ window.onReady = function (callback) {
 
   function getPerPage() {
     const w = window.innerWidth;
-    if (w >= 980) return 4;
+    if (w >= 980) return 3;
     if (w >= 720) return 2;
     return 1;
   }
