@@ -3,6 +3,7 @@
 
   const TYPESENSE_WORKER_BASE = "https://typesense-proxy-worker.colemandavis4.workers.dev";
   const OPENAI_WORKER_BASE = "https://openai-proxy-worker.colemandavis4.workers.dev";
+  const CONGRESS_WORKER_BASE = "https://congress-proxy.colemandavis4.workers.dev";
 
   const COLLECTION = (window.APP_CONFIG && window.APP_CONFIG.TYPESENSE_INDEX) || "congress_bills";
   const EMBED_MODEL = (window.APP_CONFIG && window.APP_CONFIG.OPENAI_EMBED_MODEL) || "text-embedding-3-large";
@@ -11,6 +12,7 @@
   const TS_DOCS_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
   const TS_MULTI_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/multi_search`;
   const OA_EMBED_URL = `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/embeddings`;
+  const CONGRESS_PROXY_URL = `${CONGRESS_WORKER_BASE.replace(/\/$/, "")}/`;
   const BILL_INCLUDE_FIELDS = [
     "id",
     "title",
@@ -79,6 +81,22 @@
     const t = String(s || "").replace(/_/g, " ").trim();
     if (!t) return "";
     return t.split(/\s+/).map(w => w.slice(0, 1).toUpperCase() + w.slice(1)).join(" ");
+  }
+
+  function parseBillId(id) {
+    const parts = String(id || "").trim().split("-").filter(Boolean);
+    if (parts.length < 3) return null;
+    const congress = Number.parseInt(parts[0], 10);
+    const number = Number.parseInt(parts[parts.length - 1], 10);
+    const type = parts.slice(1, parts.length - 1).join("-").toLowerCase();
+    if (!Number.isFinite(congress) || !Number.isFinite(number) || !type) return null;
+    return { congress, type, number };
+  }
+
+  function congressGovBillUrl(doc) {
+    const parsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
+    if (!parsed) return "";
+    return `https://www.congress.gov/bill/${parsed.congress}th-congress/${parsed.type.toLowerCase()}-bill/${parsed.number}`;
   }
 
   async function fetchBillById(id) {
@@ -296,8 +314,8 @@
     const committee = Array.isArray(doc.committees) && doc.committees.length ? doc.committees[0] : "";
     const partyLabel = sponsorPartyLabel(doc.sponsor_party);
     const partyClass = sponsorDotClass(doc.sponsor_party);
-
     const officialSummary = doc.official_summary_text || doc.official_summary || "Official summary unavailable in index data.";
+    const congressUrl = congressGovBillUrl(doc);
 
     mount.innerHTML = `
       <div class="panel__body">
@@ -311,12 +329,12 @@
 
           <h1 class="bill-detail__title">${escHtml(doc.title || "(Untitled bill)")}</h1>
 
-          <div class="billcard__tagwrap">
-            ${doc.chamber ? `<span class="chip billcard__tag">${escHtml(doc.chamber)}</span>` : ""}
-            ${doc.congress ? `<span class="chip billcard__tag">${escHtml(String(doc.congress))}th Congress</span>` : ""}
-            ${committee ? `<span class="chip billcard__tag">${escHtml(committee)}</span>` : ""}
-            ${doc.policy_area ? `<span class="chip billcard__tag">${escHtml(doc.policy_area)}</span>` : ""}
-            <span class="chip billcard__tag">${escHtml(partyLabel)}</span>
+          <div class="bill-detail__facts">
+            ${doc.chamber ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Chamber</div><div class="bill-detail__fact-value">${escHtml(doc.chamber)}</div></div>` : ""}
+            ${doc.congress ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Congress</div><div class="bill-detail__fact-value">${escHtml(String(doc.congress))}th Congress</div></div>` : ""}
+            ${committee ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Committee</div><div class="bill-detail__fact-value">${escHtml(committee)}</div></div>` : ""}
+            ${doc.policy_area ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Policy area</div><div class="bill-detail__fact-value">${escHtml(doc.policy_area)}</div></div>` : ""}
+            <div class="bill-detail__fact"><div class="bill-detail__fact-label">Sponsor party</div><div class="bill-detail__fact-value">${escHtml(partyLabel)}</div></div>
           </div>
 
           <div class="bill-detail__meta muted">
@@ -341,10 +359,82 @@
               <p class="bill-detail__summary">${escHtml(doc.latest_action_text)}</p>
             </section>
           ` : ""}
+
+          ${congressUrl ? `<div class="bill-detail__actions"><a class="bill-detail__button" href="${escHtml(congressUrl)}" target="_blank" rel="noopener noreferrer">View on Congress.gov</a></div>` : ""}
         </article>
       </div>
     `;
   }
+
+  async function fetchCongressJson(path, params = {}) {
+    const url = new URL(CONGRESS_PROXY_URL);
+    url.searchParams.set("path", path);
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
+    });
+
+    console.info("[bill-text] GET", url.toString());
+    const res = await fetch(url.toString());
+    const text = await res.text().catch(() => "");
+    console.info(`[bill-text] status ${res.status} for ${path}`);
+    if (!res.ok) throw new Error(`Congress proxy failed HTTP ${res.status}: ${text || "(no body)"}`);
+
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (e) {
+      throw new Error(`Congress proxy returned invalid JSON for ${path}`);
+    }
+  }
+
+  async function fetchBillText(doc) {
+    const parsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
+    if (!parsed) return null;
+
+    const indexData = await fetchCongressJson(`/v3/bill/${parsed.congress}/${parsed.type}/${parsed.number}/text`, { format: "json", limit: 5 });
+    const versions = indexData?.textVersions || indexData?.bill?.textVersions || [];
+    if (!Array.isArray(versions) || !versions.length) {
+      return { summary: "No bill text versions were returned by Congress.gov.", links: [] };
+    }
+
+    const latest = versions[0] || {};
+    const links = [];
+    const textFormats = Array.isArray(latest.formats) ? latest.formats : [];
+    for (const fmt of textFormats) {
+      const label = fmt?.type || fmt?.format || "Text";
+      const candidateUrl = fmt?.url;
+      if (candidateUrl) links.push({ label, url: candidateUrl });
+    }
+
+    const issued = latest?.date || latest?.issuedOn || latest?.updateDate || "";
+    const title = latest?.type || latest?.name || "Latest version";
+    const summary = `Loaded bill text metadata from Congress.gov proxy. ${issued ? `Version date: ${issued}.` : ""}`;
+    return { summary: `${title}. ${summary}`.trim(), links };
+  }
+
+  function renderBillText(textData, doc) {
+    const mount = document.getElementById("billFullText");
+    if (!mount) return;
+
+    if (!doc) {
+      mount.innerHTML = `<div class="panel__head"><div class="panel__title">Bill text</div></div><div class="panel__body"><div class="muted">Load a bill to view text metadata.</div></div>`;
+      return;
+    }
+
+    if (!textData) {
+      mount.innerHTML = `<div class="panel__head"><div class="panel__title">Bill text</div></div><div class="panel__body"><div class="muted">No bill text data found.</div></div>`;
+      return;
+    }
+
+    const links = Array.isArray(textData.links) ? textData.links : [];
+    mount.innerHTML = `
+      <div class="panel__head"><div class="panel__title">Bill text</div></div>
+      <div class="panel__body">
+        <p class="bill-text__content">${escHtml(textData.summary || "Bill text loaded.")}</p>
+        ${links.length ? `<ul class="bill-text__links">${links.map((l) => `<li><a href="${escHtml(l.url)}" target="_blank" rel="noopener noreferrer">${escHtml(l.label || "Open text")}</a></li>`).join("")}</ul>` : `<div class="muted">No downloadable formats returned for this bill.</div>`}
+      </div>
+    `;
+  }
+
 
   function renderRelated(list) {
     const mount = document.getElementById("relatedBills");
@@ -363,10 +453,10 @@
           <span class="${partyClass} related-item__dot" aria-hidden="true"></span>
           <div class="related-item__top">
             <span class="chip billcard__tag">${escHtml(short)}</span>
-            <span class="muted">${escHtml(epochToDate(d.update_date))}</span>
-          </div>
+            </div>
           <div class="related-item__title">${escHtml(d.title || "(Untitled bill)")}</div>
           ${d.status ? `<div class="related-item__sub muted">${escHtml(titleCaseFromToken(d.status))}</div>` : ""}
+          <div class="related-item__date muted">${escHtml(epochToDate(d.update_date) || "")}</div>
         </a>
       `;
     }).join("");
@@ -376,6 +466,7 @@
     const id = getParam("id");
     if (!id) {
       renderBillDetail(null);
+      renderBillText(null, null);
       const mount = document.getElementById("relatedBills");
       if (mount) mount.innerHTML = `<div class="muted">Add ?id=... to the URL to load a bill.</div>`;
       return;
@@ -386,12 +477,22 @@
       renderBillDetail(doc);
       if (!doc) return;
 
+      try {
+        const textData = await fetchBillText(doc);
+        renderBillText(textData, doc);
+      } catch (textErr) {
+        console.warn("[bill-text] failed to load bill text", textErr);
+        renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", links: [] }, doc);
+      }
+
       const related = await fetchRelatedBills(doc);
       renderRelated(related);
     } catch (e) {
       console.error(e);
       const main = document.getElementById("billMain");
       if (main) main.innerHTML = `<div class="panel__body"><div class="muted">Failed to load bill details.</div></div>`;
+      const textMount = document.getElementById("billFullText");
+      if (textMount) textMount.innerHTML = `<div class="panel__head"><div class="panel__title">Bill text</div></div><div class="panel__body"><div class="muted">Failed to load bill text.</div></div>`;
       const rail = document.getElementById("relatedBills");
       if (rail) rail.innerHTML = `<div class="muted">Failed to load related bills.</div>`;
     }
