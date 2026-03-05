@@ -1092,8 +1092,9 @@
     }
   }
 
-  async function runSearch(q, page = 1) {
+  async function runSearch(q, page = 1, options = {}) {
     const query = String(q || "").trim();
+    const skipAnswer = !!options.skipAnswer;
     const mount = document.getElementById("results");
     if (!mount) return;
 
@@ -1118,18 +1119,20 @@
     mount.innerHTML = `<div class="muted">Searching…</div>`;
 
     const isFirstPage = pageNum === 1;
-    if (isFirstPage) {
+    if (isFirstPage && !skipAnswer) {
       renderAnswerLoading("Searching and preparing context…");
     }
 
     const filterBy = buildFilterBy();
 
     let vector = [];
-    try {
-      vector = await embedQuery(query);
-    } catch (e) {
-      console.warn("Embeddings failed; running text-only search:", e);
-      vector = [];
+    if (query !== "*") {
+      try {
+        vector = await embedQuery(query);
+      } catch (e) {
+        console.warn("Embeddings failed; running text-only search:", e);
+        vector = [];
+      }
     }
 
     const json = await hybridSearchMulti({
@@ -1148,7 +1151,7 @@
     state.lastHits = hits;
     state.lastSearchFound = Number(json?.found || hits.length || 0);
 
-    if (!isFirstPage) {
+    if (!isFirstPage || skipAnswer) {
       return;
     }
 
@@ -1232,9 +1235,9 @@
         if (!state.lastUserQuery) return;
         try {
           await runSearch(state.lastUserQuery, nextPage);
-          const resultsSection = document.getElementById("resultsSection");
-          if (resultsSection) {
-            resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+          const resultsMount = document.getElementById("results");
+          if (resultsMount) {
+            resultsMount.scrollIntoView({ behavior: "smooth", block: "start" });
           }
         } catch (e) {
           console.error(e);
@@ -1249,11 +1252,6 @@
       state.activeCommitteeLabel = committeeParam;
       syncAllDropdowns();
       updateAllBadges();
-      showResultsSection();
-      const resultsMount = document.getElementById("results");
-      if (resultsMount) {
-        resultsMount.innerHTML = `<div class="results-note muted">Showing bills tagged to ${escHtml(committeeParam)}</div><div class="muted" style="margin-top:8px;">Submit a search to load matching bills.</div>`;
-      }
     }
     const qParam = getParam("q");
     if ($input.length && qParam) {
@@ -1263,6 +1261,12 @@
     if (qParam && $input.length) {
       try {
         await runSearch(qParam, 1);
+      } catch (e) {
+        console.error(e);
+      }
+    } else if (committeeParam) {
+      try {
+        await runSearch("*", 1, { skipAnswer: true });
       } catch (e) {
         console.error(e);
       }

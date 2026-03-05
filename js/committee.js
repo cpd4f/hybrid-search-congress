@@ -31,10 +31,20 @@
     return String(item?.chamber || item?.systemCode?.split("00")[0] || "Other").trim() || "Other";
   }
 
+
+  function isMainCommittee(item) {
+    const systemCode = String(item?.systemCode || "").toLowerCase();
+    const hasParent = !!(item && item.parent && item.parent.systemCode);
+    if (hasParent) return false;
+    if (!systemCode) return true;
+    return systemCode.endsWith("00");
+  }
+
   function normalizeCommittees(payload) {
     const rows = payload?.committees || payload?.committee || payload?.items || [];
     if (!Array.isArray(rows)) return [];
     return rows
+      .filter((item) => isMainCommittee(item))
       .map((item) => ({
         name: getCommitteeName(item),
         chamber: getCommitteeChamber(item)
