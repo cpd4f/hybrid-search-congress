@@ -982,22 +982,21 @@
 
       return `
         <article class="billcard">
+          <span class="${partyClass} billcard__party-dot" aria-hidden="true"></span>
           <div class="billcard__meta">
             <span class="chip">${escHtml(short || d.id)}</span>
-            <span class="muted">${escHtml(epochToDate(d.update_date))}</span>
           </div>
-          <h3 class="billcard__title">${escHtml(d.title || "(Untitled bill)")}</h3>
-          <div class="billcard__sub muted">
-            ${escHtml(d.chamber || "")}
-            ${committee ? ` • ${escHtml(committee)}` : ""}
+          <h3 class="billcard__title">
+            <a class="billcard__titlelink" href="./bill.html?id=${encodeURIComponent(d.id)}">${escHtml(d.title || "(Untitled bill)")}</a>
+          </h3>
+          <div class="billcard__sub">
+            <div class="billcard__tagwrap">
+              ${d.chamber ? `<span class="chip billcard__tag">${escHtml(d.chamber)}</span>` : ""}
+              ${committee ? `<span class="chip billcard__tag">${escHtml(committee)}</span>` : ""}
+              <span class="chip billcard__tag">${escHtml(partyLabel)}</span>
+            </div>
           </div>
-          <div class="billcard__sub" style="margin-top:8px;">
-            <span class="${partyClass}" aria-hidden="true"></span>
-            <span class="muted">${escHtml(partyLabel)}</span>
-          </div>
-          <div style="margin-top:12px;">
-            <a class="link" href="./bill.html?id=${encodeURIComponent(d.id)}">Open bill</a>
-          </div>
+          <span class="billcard__date muted">${escHtml(epochToDate(d.update_date))}</span>
         </article>
       `;
     }).join("");
@@ -1026,33 +1025,33 @@
       const partyClass = sponsorDotClass(d.sponsor_party);
 
       return `
-        <article class="resultcard">
-          <div class="resultcard__meta">
+        <article class="billcard resultcard">
+          <span class="${partyClass} billcard__party-dot" aria-hidden="true"></span>
+          <div class="billcard__meta">
             <span class="chip">${escHtml(short || d.id || "")}</span>
-            <span class="muted">${escHtml(epochToDate(d.update_date))}</span>
           </div>
 
-          <h3 class="resultcard__title">
-            <a href="./bill.html?id=${encodeURIComponent(d.id || "")}" class="link">
+          <h3 class="billcard__title">
+            <a href="./bill.html?id=${encodeURIComponent(d.id || "")}" class="billcard__titlelink">
               ${escHtml(d.title || "(Untitled bill)")}
             </a>
           </h3>
-
-          <div class="resultcard__sub muted">
-            ${escHtml(d.chamber || "")}
-            ${d.congress ? ` • ${escHtml(String(d.congress))}th Congress` : ""}
-            ${committee ? ` • ${escHtml(committee)}` : ""}
-            ${d.status ? ` • ${escHtml(titleCaseFromToken(d.status))}` : ""}
-          </div>
 
           <p class="resultcard__summary">
             ${escHtml(d.ai_summary_text || "No summary available.")}
           </p>
 
-          <div class="resultcard__footer">
-            <span class="${partyClass}" aria-hidden="true"></span>
-            <span class="muted">${escHtml(partyLabel)}</span>
+          <div class="billcard__sub">
+            <div class="billcard__tagwrap">
+              ${d.chamber ? `<span class="chip billcard__tag">${escHtml(d.chamber)}</span>` : ""}
+              ${d.congress ? `<span class="chip billcard__tag">${escHtml(String(d.congress))}th Congress</span>` : ""}
+              ${committee ? `<span class="chip billcard__tag">${escHtml(committee)}</span>` : ""}
+              ${d.status ? `<span class="chip billcard__tag">${escHtml(titleCaseFromToken(d.status))}</span>` : ""}
+              <span class="chip billcard__tag">${escHtml(partyLabel)}</span>
+            </div>
           </div>
+
+          <span class="billcard__date muted">${escHtml(epochToDate(d.update_date))}</span>
         </article>
       `;
     }).join("");

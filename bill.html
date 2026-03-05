@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Bill Details • Congress Bill Search</title>
+    <meta name="description" content="Detailed bill view with AI and official summaries plus related bills." />
+
+    <link rel="stylesheet" href="./css/styles.css" />
+    <link rel="stylesheet" href="./css/filters.css" />
+
+    <script src="./js/app.js" defer></script>
+    <script src="./js/markdown.js" defer></script>
+    <script src="./js/bill.js" defer></script>
+
+    <link rel="icon" href="./assets/favicon.ico" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <a class="brand" href="./index.html" aria-label="Home">
+          <span class="brand__mark"></span>
+          <span class="brand__text">Congress Bill Search</span>
+        </a>
+
+        <nav class="topbar__nav" aria-label="Primary">
+          <a href="./index.html" class="topbar__link">Search</a>
+          <a href="./committee.html" class="topbar__link">Committees</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="section">
+        <div class="container">
+          <div class="bill-layout">
+            <article class="panel bill-main" id="billMain">
+              <div class="panel__body">
+                <div class="muted">Loading bill details…</div>
+              </div>
+            </article>
+
+            <aside class="panel bill-rail">
+              <div class="panel__head">
+                <div class="panel__title">Related bills</div>
+              </div>
+              <div class="panel__body" id="relatedBills">
+                <div class="muted">Loading related bills…</div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
