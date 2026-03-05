@@ -1,14 +1,15 @@
 /* ---------------------------------------------------
-   Minimal Markdown → HTML
+   Minimal Markdown → HTML (SAFE)
    Supports:
    - **bold**
    - *italic*
    - [text](url)
    - Bullets (-, *)
-   - Numbered lists (1.)
+   - Numbered lists (1.)  -> rendered as bullets (NOT headings / NOT numbered)
    - Paragraphs + line breaks
    Notes:
    - Escapes HTML first (safe)
+   - Strips leading markdown heading markers (e.g., ###) because AI sometimes emits them
 --------------------------------------------------- */
 
 (function () {
@@ -21,6 +22,11 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  function stripHeadingMarkers(line) {
+    // Remove leading markdown heading tokens like "#", "##", "###"
+    return String(line || "").replace(/^\s*#{1,6}\s+/, "");
   }
 
   function inline(md) {
@@ -46,65 +52,48 @@
 
     const out = [];
     let inUL = false;
-    let inOL = false;
 
-    function closeLists() {
+    function closeUL() {
       if (inUL) {
         out.push("</ul>");
         inUL = false;
       }
-      if (inOL) {
-        out.push("</ol>");
-        inOL = false;
-      }
     }
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+      let line = stripHeadingMarkers(lines[i]);
       const t = line.trim();
 
       // Blank line = paragraph break
       if (!t) {
-        closeLists();
+        closeUL();
         continue;
       }
 
-      // Bullet list
+      // Treat numbered list lines as bullets (avoid AI "1." formatting)
+      const isNumbered = /^\d+\.\s+/.test(t);
       const isBullet = /^[-*]\s+/.test(t);
-      if (isBullet) {
-        if (inOL) {
-          out.push("</ol>");
-          inOL = false;
-        }
+
+      if (isBullet || isNumbered) {
         if (!inUL) {
           out.push('<ul style="margin:10px 0 0 18px; padding:0;">');
           inUL = true;
         }
-        out.push(`<li style="margin:6px 0; line-height:1.5;">${inline(t.replace(/^[-*]\s+/, ""))}</li>`);
-        continue;
-      }
 
-      // Numbered list
-      const isNumbered = /^\d+\.\s+/.test(t);
-      if (isNumbered) {
-        if (inUL) {
-          out.push("</ul>");
-          inUL = false;
-        }
-        if (!inOL) {
-          out.push('<ol style="margin:10px 0 0 20px; padding:0;">');
-          inOL = true;
-        }
-        out.push(`<li style="margin:6px 0; line-height:1.5;">${inline(t.replace(/^\d+\.\s+/, ""))}</li>`);
+        const cleaned = isBullet
+          ? t.replace(/^[-*]\s+/, "")
+          : t.replace(/^\d+\.\s+/, "");
+
+        out.push(`<li style="margin:6px 0; line-height:1.5;">${inline(cleaned)}</li>`);
         continue;
       }
 
       // Normal paragraph line(s)
-      closeLists();
+      closeUL();
       out.push(`<p style="margin:10px 0; line-height:1.55;">${inline(t)}</p>`);
     }
 
-    closeLists();
+    closeUL();
     return out.join("");
   }
 
