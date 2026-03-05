@@ -581,15 +581,38 @@ img { max-width: 100%; }
   background: var(--color-primary-hover);
   border-color: var(--color-primary-hover);
 }
+.bill-text__head {
+  align-items: center;
+}
+.bill-text__pdfbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--color-primary);
+  color: #fff;
+  background: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.bill-text__pdfbtn:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
 .bill-text__content {
   margin: 0;
   white-space: pre-wrap;
   line-height: 1.55;
   font-size: 14px;
 }
-.bill-text__links {
-  margin: 10px 0 0;
-  padding-left: 18px;
+.bill-text__html {
+  max-height: 1200px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
 }
 .related-item {
   display: block;

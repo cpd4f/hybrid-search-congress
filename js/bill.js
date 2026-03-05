@@ -386,6 +386,30 @@
     }
   }
 
+  async function fetchHtmlDocumentFromUrl(rawUrl) {
+    if (!rawUrl) return "";
+
+    const parsed = new URL(rawUrl);
+    let fetchUrl = rawUrl;
+
+    if (parsed.hostname === "api.congress.gov") {
+      const proxy = new URL(CONGRESS_PROXY_URL);
+      proxy.searchParams.set("path", parsed.pathname);
+      parsed.searchParams.forEach((v, k) => {
+        if (k !== "api_key") proxy.searchParams.set(k, v);
+      });
+      fetchUrl = proxy.toString();
+    }
+
+    console.info("[bill-text] GET html", fetchUrl);
+    const res = await fetch(fetchUrl, { headers: { Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" } });
+    const html = await res.text().catch(() => "");
+    console.info(`[bill-text] html status ${res.status}`);
+    if (!res.ok) throw new Error(`HTML fetch failed HTTP ${res.status}`);
+
+    return html;
+  }
+
   async function fetchBillText(doc) {
     const parsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
     if (!parsed) return null;
@@ -393,22 +417,32 @@
     const indexData = await fetchCongressJson(`/v3/bill/${parsed.congress}/${parsed.type}/${parsed.number}/text`, { format: "json", limit: 5 });
     const versions = indexData?.textVersions || indexData?.bill?.textVersions || [];
     if (!Array.isArray(versions) || !versions.length) {
-      return { summary: "No bill text versions were returned by Congress.gov.", links: [] };
+      return { summary: "No bill text versions were returned by Congress.gov.", html: "", pdfUrl: "" };
     }
 
     const latest = versions[0] || {};
-    const links = [];
     const textFormats = Array.isArray(latest.formats) ? latest.formats : [];
-    for (const fmt of textFormats) {
-      const label = fmt?.type || fmt?.format || "Text";
-      const candidateUrl = fmt?.url;
-      if (candidateUrl) links.push({ label, url: candidateUrl });
+    const htmlFormat = textFormats.find((f) => /formatted\s*text|html/i.test(String(f?.type || f?.format || ""))) || textFormats.find((f) => /htm/i.test(String(f?.url || ""))) || null;
+    const pdfFormat = textFormats.find((f) => /pdf/i.test(String(f?.type || f?.format || ""))) || textFormats.find((f) => /\.pdf(\?|$)/i.test(String(f?.url || ""))) || null;
+
+    let html = "";
+    if (htmlFormat?.url) {
+      try {
+        html = await fetchHtmlDocumentFromUrl(htmlFormat.url);
+      } catch (e) {
+        console.warn("[bill-text] formatted HTML fetch failed", e);
+      }
     }
 
     const issued = latest?.date || latest?.issuedOn || latest?.updateDate || "";
     const title = latest?.type || latest?.name || "Latest version";
-    const summary = `Loaded bill text metadata from Congress.gov proxy. ${issued ? `Version date: ${issued}.` : ""}`;
-    return { summary: `${title}. ${summary}`.trim(), links };
+    const summary = `${title}${issued ? ` • ${issued}` : ""}`;
+
+    return {
+      summary,
+      html,
+      pdfUrl: pdfFormat?.url || ""
+    };
   }
 
   function renderBillText(textData, doc) {
@@ -425,12 +459,21 @@
       return;
     }
 
-    const links = Array.isArray(textData.links) ? textData.links : [];
+    const pdfButton = textData.pdfUrl
+      ? `<a class="bill-text__pdfbtn" href="${escHtml(textData.pdfUrl)}" target="_blank" rel="noopener noreferrer">Open PDF</a>`
+      : "";
+
+    const bodyHtml = textData.html
+      ? `<div class="bill-text__html">${textData.html}</div>`
+      : `<p class="bill-text__content">${escHtml(textData.summary || "Bill text loaded, but formatted HTML was unavailable.")}</p>`;
+
     mount.innerHTML = `
-      <div class="panel__head"><div class="panel__title">Bill text</div></div>
+      <div class="panel__head bill-text__head">
+        <div class="panel__title">Bill text</div>
+        ${pdfButton}
+      </div>
       <div class="panel__body">
-        <p class="bill-text__content">${escHtml(textData.summary || "Bill text loaded.")}</p>
-        ${links.length ? `<ul class="bill-text__links">${links.map((l) => `<li><a href="${escHtml(l.url)}" target="_blank" rel="noopener noreferrer">${escHtml(l.label || "Open text")}</a></li>`).join("")}</ul>` : `<div class="muted">No downloadable formats returned for this bill.</div>`}
+        ${bodyHtml}
       </div>
     `;
   }
@@ -482,7 +525,7 @@
         renderBillText(textData, doc);
       } catch (textErr) {
         console.warn("[bill-text] failed to load bill text", textErr);
-        renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", links: [] }, doc);
+        renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", html: "", pdfUrl: "" }, doc);
       }
 
       const related = await fetchRelatedBills(doc);
