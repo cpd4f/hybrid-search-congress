@@ -543,17 +543,15 @@
       <div class="panel__body">
         <section class="bill-qa">
           <div class="bill-qa__title">Ask a question about the bill</div>
+          <div id="billQaMessages" class="bill-qa__messages">
+            <div class="bill-qa__row bill-qa__row--assistant">
+              <div class="bill-qa__bubble bill-qa__bubble--assistant muted">Ask a question to get a bill-specific answer.</div>
+            </div>
+          </div>
           <form id="billQaForm" class="bill-qa__form">
             <input id="billQaInput" class="bill-qa__input" type="text" autocomplete="off" placeholder="Ask about this bill…" />
             <button type="submit" class="bill-qa__btn">Ask</button>
           </form>
-          <div id="billQaAnswer" class="bill-qa__answer muted">Ask a question to get a bill-specific answer.</div>
-          <div id="billQaFollowWrap" hidden>
-            <form id="billQaFollowForm" class="bill-qa__form bill-qa__form--follow">
-              <input id="billQaFollowInput" class="bill-qa__input" type="text" autocomplete="off" placeholder="Ask a follow-up…" />
-              <button type="submit" class="bill-qa__btn">Ask</button>
-            </form>
-          </div>
         </section>
         ${bodyHtml}
       </div>
@@ -581,6 +579,11 @@
       `Bill id: ${doc?.id || "unknown"}`,
       `Title: ${doc?.title || ""}`,
       `Status: ${doc?.status ? titleCaseFromToken(doc.status) : "Unknown"}`,
+      `Sponsor party: ${sponsorPartyLabel(doc?.sponsor_party)}`,
+      `Sponsor state: ${doc?.sponsor_state || ""}`,
+      `Committee: ${Array.isArray(doc?.committees) && doc.committees.length ? doc.committees[0] : ""}`,
+      `Policy area: ${doc?.policy_area || ""}`,
+      `Cosponsors: ${Number.isFinite(doc?.cosponsor_count) ? doc.cosponsor_count : "Unknown"}`,
       `Latest action: ${doc?.latest_action_text || ""}`,
       `AI summary: ${doc?.ai_summary_text || ""}`,
       `Official summary: ${doc?.official_summary_text || doc?.official_summary || ""}`,
@@ -628,20 +631,27 @@ ${prior}` : "",
     return String(text || "").trim();
   }
 
-  function renderBillQaAnswer(answer, isError) {
-    const body = document.getElementById("billQaAnswer");
-    if (!body) return;
-    if (isError) {
-      body.innerHTML = `<div class="muted">${escHtml(answer || "Could not generate an answer.")}</div>`;
-      return;
-    }
-    if (window.simpleMarkdownToHTML) body.innerHTML = window.simpleMarkdownToHTML(answer || "");
-    else body.innerHTML = parseTextToHtml(answer || "");
-  }
+  function appendBillQaMessage(role, text, pending) {
+    const mount = document.getElementById("billQaMessages");
+    if (!mount) return null;
 
-  function setBillQaLoading(msg) {
-    const body = document.getElementById("billQaAnswer");
-    if (body) body.innerHTML = `<div class="muted">${escHtml(msg || "Thinking…")}</div>`;
+    const row = document.createElement("div");
+    row.className = `bill-qa__row ${role === "user" ? "bill-qa__row--user" : "bill-qa__row--assistant"}`;
+
+    const bubble = document.createElement("div");
+    bubble.className = `bill-qa__bubble ${role === "user" ? "bill-qa__bubble--user" : "bill-qa__bubble--assistant"}`;
+    if (pending) {
+      bubble.innerHTML = `<span class="muted">${escHtml(text || "Thinking…")}</span>`;
+    } else if (role === "user") {
+      bubble.textContent = String(text || "");
+    } else {
+      bubble.innerHTML = window.simpleMarkdownToHTML ? window.simpleMarkdownToHTML(text || "") : parseTextToHtml(text || "");
+    }
+
+    row.appendChild(bubble);
+    mount.appendChild(row);
+    mount.scrollTop = mount.scrollHeight;
+    return bubble;
   }
 
   function wireBillQa(doc, textData) {
@@ -651,14 +661,18 @@ ${prior}` : "",
 
     const askForm = document.getElementById("billQaForm");
     const askInput = document.getElementById("billQaInput");
-    const followForm = document.getElementById("billQaFollowForm");
-    const followInput = document.getElementById("billQaFollowInput");
-    const followWrap = document.getElementById("billQaFollowWrap");
+    const messages = document.getElementById("billQaMessages");
+    if (!askForm || !askInput || !messages) return;
 
-    async function submitQuestion(question) {
-      const q = String(question || "").trim();
+    askForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const q = String(askInput.value || "").trim();
       if (!q) return;
-      setBillQaLoading("Generating answer…");
+      askInput.value = "";
+
+      appendBillQaMessage("user", q);
+      const pendingBubble = appendBillQaMessage("assistant", "Generating answer…", true);
+
       try {
         const answer = await generateBillAnswer({
           doc: billQaState.currentDoc,
@@ -666,33 +680,20 @@ ${prior}` : "",
           question: q,
           history: billQaState.history
         });
+
         billQaState.history.push({ role: "user", text: q });
         billQaState.history.push({ role: "assistant", text: answer });
-        renderBillQaAnswer(answer, false);
-        if (followWrap) followWrap.removeAttribute("hidden");
-      } catch (e) {
-        console.warn("[bill-qa] failed", e);
-        renderBillQaAnswer("I couldn't answer that right now. Please try again.", true);
+
+        if (pendingBubble) {
+          pendingBubble.innerHTML = window.simpleMarkdownToHTML
+            ? window.simpleMarkdownToHTML(answer || "")
+            : parseTextToHtml(answer || "");
+        }
+      } catch (err) {
+        console.warn("[bill-qa] failed", err);
+        if (pendingBubble) pendingBubble.innerHTML = `<span class="muted">I couldn't answer that right now. Please try again.</span>`;
       }
-    }
-
-    if (askForm && askInput) {
-      askForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const q = askInput.value;
-        askInput.value = "";
-        submitQuestion(q);
-      });
-    }
-
-    if (followForm && followInput) {
-      followForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const q = followInput.value;
-        followInput.value = "";
-        submitQuestion(q);
-      });
-    }
+    });
   }
 
 
