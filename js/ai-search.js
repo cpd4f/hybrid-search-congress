@@ -6,7 +6,7 @@
    - OpenAI:
        - embeddings: POST /embeddings
        - answer: POST /responses
-   - Retains AI Answer panel + follow-up + refresh summary
+   - Retains AI Answer panel + refresh summary
    - Adds Filters:
        Chamber, Committee, Policy area, Sponsor party (AP style labels),
        Status, Updated range
@@ -827,26 +827,6 @@
         <div id="aiAnswerBody" class="muted" style="line-height:1.5;">
           Ask a question above to get a plain-English answer.
         </div>
-
-        <form id="aiFollowUpForm" style="margin-top:14px;">
-          <div class="search__bar" style="border-radius:12px;">
-            <input
-              id="aiFollowUpInput"
-              class="search__input"
-              type="text"
-              autocomplete="off"
-              placeholder="Ask a follow-up question…"
-              style="padding:14px 16px; font-size:15px;"
-            />
-            <button class="search__btn" type="submit" style="padding:0 16px;">
-              Ask
-            </button>
-          </div>
-          <div class="muted" style="margin-top:8px; font-size:12px;">
-            Follow-ups use the current results as sources.
-          </div>
-        </form>
-
         <div id="aiSourcesLinks" style="margin-top:12px;"></div>
       </div>
     `;
@@ -1202,31 +1182,6 @@
         await runAnswerFlow({
           primaryQuery: state.lastPrimaryQuery,
           question: state.lastPrimaryQuery,
-          hits: state.lastHits
-        });
-      }
-    });
-
-    document.addEventListener("submit", async function (ev) {
-      const form = ev.target;
-      if (!(form instanceof HTMLFormElement)) return;
-
-      if (form.id === "aiFollowUpForm") {
-        ev.preventDefault();
-
-        const input = document.getElementById("aiFollowUpInput");
-        const follow = input ? String(input.value || "").trim() : "";
-
-        if (!follow) return;
-
-        if (!state.lastPrimaryQuery || !state.lastHits.length) {
-          renderAnswerError("Run a search first, then ask a follow-up.");
-          return;
-        }
-
-        await runAnswerFlow({
-          primaryQuery: state.lastPrimaryQuery,
-          question: follow,
           hits: state.lastHits
         });
       }
