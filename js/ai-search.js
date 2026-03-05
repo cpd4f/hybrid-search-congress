@@ -6,7 +6,7 @@
    - OpenAI:
        - embeddings: POST /embeddings
        - answer: POST /responses
-   - Retains AI Answer panel + follow-up + refresh summary
+   - Retains AI Answer panel + refresh summary
    - Adds Filters:
        Chamber, Committee, Policy area, Sponsor party (AP style labels),
        Status, Updated range
@@ -390,7 +390,7 @@
 
   function renderAccordionItem(key, label) {
     return `
-      <details class="filter-acc__item" open>
+      <details class="filter-acc__item">
         <summary class="filter-acc__toggle">
           <span class="filter-acc__label">${escHtml(label)}</span>
           <span class="filter-acc__badge" data-badge="${escHtml(key)}"></span>
@@ -529,7 +529,7 @@
     const resultsSection = document.getElementById("resultsSection");
     const hasShownResults = resultsSection && !resultsSection.hasAttribute("hidden");
     if (hasShownResults || q.trim()) {
-      runSearch(q).catch(err => console.error(err));
+      runSearch(q, 1).catch(err => console.error(err));
     }
   }
 
@@ -827,26 +827,6 @@
         <div id="aiAnswerBody" class="muted" style="line-height:1.5;">
           Ask a question above to get a plain-English answer.
         </div>
-
-        <form id="aiFollowUpForm" style="margin-top:14px;">
-          <div class="search__bar" style="border-radius:12px;">
-            <input
-              id="aiFollowUpInput"
-              class="search__input"
-              type="text"
-              autocomplete="off"
-              placeholder="Ask a follow-up question…"
-              style="padding:14px 16px; font-size:15px;"
-            />
-            <button class="search__btn" type="submit" style="padding:0 16px;">
-              Ask
-            </button>
-          </div>
-          <div class="muted" style="margin-top:8px; font-size:12px;">
-            Follow-ups use the current results as sources.
-          </div>
-        </form>
-
         <div id="aiSourcesLinks" style="margin-top:12px;"></div>
       </div>
     `;
@@ -1010,6 +990,11 @@
 
     const hits = json?.hits || [];
     const found = Number(json?.found || hits.length || 0);
+    const pages = Math.max(1, Math.ceil(found / RESULTS_PER_PAGE));
+    const currentPage = Math.max(1, Number(state.currentPage || 1));
+    const hasPrev = currentPage > 1;
+    const hasNext = currentPage < pages;
+
     setResultsCount(found);
 
     if (!hits.length) {
@@ -1017,7 +1002,7 @@
       return;
     }
 
-    mount.innerHTML = hits.map(h => {
+    const cards = hits.map(h => {
       const d = h.document || {};
       const short = billShortId(d);
       const committee = firstCommittee(d.committees);
@@ -1055,13 +1040,26 @@
         </article>
       `;
     }).join("");
+
+    const pagination = `
+      <div class="results-pagination" role="navigation" aria-label="Search results pagination">
+        <button type="button" class="iconbtn" data-results-page="prev" ${hasPrev ? "" : "disabled"}>‹</button>
+        <span class="muted results-pagination__label">Page ${currentPage} of ${pages}</span>
+        <button type="button" class="iconbtn" data-results-page="next" ${hasNext ? "" : "disabled"}>›</button>
+      </div>
+    `;
+
+    mount.innerHTML = `${cards}${pagination}`;
   }
 
   /* ---------------- Search orchestration ---------------- */
 
   const state = {
     lastPrimaryQuery: "",
-    lastHits: []
+    lastHits: [],
+    lastUserQuery: "",
+    lastSearchFound: 0,
+    currentPage: 1
   };
 
   async function runAnswerFlow({ primaryQuery, question, hits }) {
@@ -1089,7 +1087,7 @@
     }
   }
 
-  async function runSearch(q) {
+  async function runSearch(q, page = 1) {
     const query = String(q || "").trim();
     const mount = document.getElementById("results");
     if (!mount) return;
@@ -1102,11 +1100,22 @@
       renderAnswerError("Ask a question above to get a plain-English answer.");
       state.lastPrimaryQuery = "";
       state.lastHits = [];
+      state.lastUserQuery = "";
+      state.lastSearchFound = 0;
+      state.currentPage = 1;
       return;
     }
 
+    const pageNum = Math.max(1, Number(page) || 1);
+    state.currentPage = pageNum;
+    state.lastUserQuery = query;
+
     mount.innerHTML = `<div class="muted">Searching…</div>`;
-    renderAnswerLoading("Searching and preparing context…");
+
+    const isFirstPage = pageNum === 1;
+    if (isFirstPage) {
+      renderAnswerLoading("Searching and preparing context…");
+    }
 
     const filterBy = buildFilterBy();
 
@@ -1114,7 +1123,6 @@
     try {
       vector = await embedQuery(query);
     } catch (e) {
-      // Embedding failure should not block text-only search.
       console.warn("Embeddings failed; running text-only search:", e);
       vector = [];
     }
@@ -1123,7 +1131,7 @@
       q: query,
       vector: vector,
       perPage: RESULTS_PER_PAGE,
-      page: 1,
+      page: pageNum,
       alpha: DEFAULT_ALPHA,
       filterBy: filterBy
     });
@@ -1133,6 +1141,11 @@
     const hits = json?.hits || [];
     state.lastPrimaryQuery = query;
     state.lastHits = hits;
+    state.lastSearchFound = Number(json?.found || hits.length || 0);
+
+    if (!isFirstPage) {
+      return;
+    }
 
     if (!hits.length) {
       renderAnswerError("No matching bills found, so I can’t summarize results yet.");
@@ -1180,7 +1193,7 @@
       $form.on("submit", async function (ev) {
         ev.preventDefault();
         try {
-          await runSearch($input.val());
+          await runSearch($input.val(), 1);
         } catch (e) {
           console.error(e);
           showResultsSection();
@@ -1204,39 +1217,38 @@
           question: state.lastPrimaryQuery,
           hits: state.lastHits
         });
+        return;
       }
-    });
 
-    document.addEventListener("submit", async function (ev) {
-      const form = ev.target;
-      if (!(form instanceof HTMLFormElement)) return;
-
-      if (form.id === "aiFollowUpForm") {
-        ev.preventDefault();
-
-        const input = document.getElementById("aiFollowUpInput");
-        const follow = input ? String(input.value || "").trim() : "";
-
-        if (!follow) return;
-
-        if (!state.lastPrimaryQuery || !state.lastHits.length) {
-          renderAnswerError("Run a search first, then ask a follow-up.");
-          return;
+      const pageBtn = t.closest("button[data-results-page]");
+      if (pageBtn) {
+        const dir = pageBtn.getAttribute("data-results-page");
+        const nextPage = dir === "prev" ? state.currentPage - 1 : state.currentPage + 1;
+        if (!state.lastUserQuery) return;
+        try {
+          await runSearch(state.lastUserQuery, nextPage);
+        } catch (e) {
+          console.error(e);
         }
-
-        await runAnswerFlow({
-          primaryQuery: state.lastPrimaryQuery,
-          question: follow,
-          hits: state.lastHits
-        });
       }
     });
 
+
+    const committeeParam = getParam("committee");
+    if (committeeParam) {
+      filterState.committees.add(committeeParam);
+      syncAllDropdowns();
+      updateAllBadges();
+    }
     const qParam = getParam("q");
-    if (qParam && $input.length) {
+    if ($input.length && qParam) {
       $input.val(qParam);
+    }
+
+    const initialQuery = qParam || (committeeParam ? "bill" : "");
+    if (initialQuery && $input.length) {
       try {
-        await runSearch(qParam);
+        await runSearch(initialQuery, 1);
       } catch (e) {
         console.error(e);
       }
