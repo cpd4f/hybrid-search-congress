@@ -504,6 +504,10 @@ img { max-width: 100%; }
   gap: 22px;
   align-items: start;
 }
+.bill-main-col {
+  display: grid;
+  gap: 18px;
+}
 .bill-main, .bill-rail {
   position: relative;
 }
@@ -537,6 +541,205 @@ img { max-width: 100%; }
   line-height: 1.6;
   color: var(--color-text);
 }
+.bill-detail__facts {
+  margin: 14px 0 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.bill-detail__fact {
+  display: grid;
+  grid-template-columns: minmax(130px, 170px) 1fr;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+.bill-detail__fact:first-child {
+  border-top: 0;
+}
+.bill-detail__fact-label {
+  font-weight: 700;
+}
+
+.bill-cosponsors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.bill-cosponsor {
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
+}
+.bill-cosponsor:first-child {
+  border-top: 0;
+}
+.bill-cosponsor__name {
+  display: block;
+  font-weight: 600;
+}
+.bill-cosponsor__meta {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+}
+.bill-cosponsors__toggle {
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bill-cosponsors__toggle:hover {
+  border-color: var(--color-primary);
+}
+.bill-detail__actions {
+  margin-top: 16px;
+}
+
+.bill-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 2px solid var(--color-border);
+}
+.bill-action {
+  margin: 0 0 10px 0;
+  padding-left: 12px;
+}
+.bill-action__date {
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.bill-action__text {
+  line-height: 1.45;
+}
+.bill-detail__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--color-primary);
+  color: #fff;
+  background: var(--color-primary);
+  font-weight: 700;
+  font-size: 13px;
+}
+.bill-detail__button:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+.bill-text__head {
+  align-items: center;
+}
+.bill-text__pdfbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--color-primary);
+  color: #fff;
+  background: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.bill-text__pdfbtn:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+.bill-text__content {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: 14px;
+}
+.bill-text__html {
+  max-height: 1200px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+.bill-qa {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: rgba(0,0,0,0.01);
+}
+.bill-qa__title {
+  font-weight: 700;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+.bill-qa__messages {
+  min-height: 48px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.bill-qa__row {
+  display: flex;
+  margin-bottom: 8px;
+}
+.bill-qa__row--user {
+  justify-content: flex-end;
+}
+.bill-qa__row--assistant {
+  justify-content: flex-start;
+}
+.bill-qa__bubble {
+  max-width: 85%;
+  border-radius: 12px;
+  padding: 8px 10px;
+  line-height: 1.45;
+  font-size: 14px;
+}
+.bill-qa__bubble--user {
+  background: var(--color-primary);
+  color: #fff;
+}
+.bill-qa__bubble--assistant {
+  background: #f3f4f6;
+  color: var(--color-text);
+}
+.bill-qa__form {
+  display: flex;
+  gap: 8px;
+}
+.bill-qa__input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  font: inherit;
+}
+.bill-qa__btn {
+  border: 0;
+  border-radius: 10px;
+  padding: 0 14px;
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bill-qa__btn:hover {
+  background: var(--color-primary-hover);
+}
 .related-item {
   display: block;
   position: relative;
@@ -545,6 +748,7 @@ img { max-width: 100%; }
   padding: 12px 12px 12px 14px;
   background: var(--color-surface);
   margin-bottom: 10px;
+  min-height: 116px;
 }
 .related-item__dot {
   position: absolute;
@@ -566,6 +770,13 @@ img { max-width: 100%; }
 }
 .related-item__sub {
   margin-top: 6px;
+  margin-right: 76px;
+  font-size: 12px;
+}
+.related-item__date {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
   font-size: 12px;
 }
 @media (max-width: 980px) {
