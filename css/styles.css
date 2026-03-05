@@ -669,6 +669,16 @@ img { max-width: 100%; }
   padding: 12px;
 }
 
+
+article#billQaCard .panel__body {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 18px;
+}
+
+div#billQaMessages {
+  margin: 0;
+}
 .bill-qa {
   margin-bottom: 14px;
   padding: 12px;

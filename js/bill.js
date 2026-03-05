@@ -388,9 +388,6 @@
     const actions = Array.isArray(detailData.actions) ? detailData.actions : [];
     const sponsors = Array.isArray(detailData.sponsors) ? detailData.sponsors : [];
     const cosponsors = Array.isArray(detailData.cosponsors) ? detailData.cosponsors : [];
-    const originals = cosponsors.filter((c) => c.isOriginalCosponsor);
-    const shownCosponsors = originals.length ? originals : cosponsors.slice(0, 1);
-    const hiddenCosponsors = cosponsors.filter((c) => !shownCosponsors.includes(c));
 
     headerMount.innerHTML = `
       <div class="panel__body">
@@ -433,12 +430,9 @@
           ${(sponsors.length || cosponsors.length) ? `
             <section class="bill-detail__section">
               <h2 class="bill-detail__sectiontitle">Sponsors & cosponsors</h2>
-              <ul class="bill-cosponsors">
-                ${sponsors.map((c) => `<li class="bill-cosponsor"><span class="bill-cosponsor__name">${escHtml(c.fullName)}</span><span class="bill-cosponsor__meta muted">Sponsor</span></li>`).join("")}
-                ${shownCosponsors.map((c) => `<li class="bill-cosponsor"><span class="bill-cosponsor__name">${escHtml(c.fullName)}</span>${c.sponsorshipDate ? `<span class="bill-cosponsor__meta muted">Cosponsor • Joined ${escHtml(c.sponsorshipDate)}</span>` : `<span class="bill-cosponsor__meta muted">Cosponsor</span>`}</li>`).join("")}
-                ${hiddenCosponsors.map((c) => `<li class="bill-cosponsor bill-cosponsor--extra" hidden><span class="bill-cosponsor__name">${escHtml(c.fullName)}</span>${c.sponsorshipDate ? `<span class="bill-cosponsor__meta muted">Cosponsor • Joined ${escHtml(c.sponsorshipDate)}</span>` : `<span class="bill-cosponsor__meta muted">Cosponsor</span>`}</li>`).join("")}
-              </ul>
-              ${hiddenCosponsors.length ? `<button type="button" class="bill-cosponsors__toggle" id="billCosponsorsToggle" data-expanded="0">Show all cosponsors (${cosponsors.length})</button>` : ""}
+              ${sponsors.length ? `<ul class="bill-cosponsors">${sponsors.map((c) => `<li class="bill-cosponsor"><span class="bill-cosponsor__name">${escHtml(c.fullName)}</span><span class="bill-cosponsor__meta muted">Sponsor</span></li>`).join("")}</ul>` : ""}
+              ${cosponsors.length ? `<button type="button" class="bill-cosponsors__toggle" id="billCosponsorsToggle" data-expanded="0">Show cosponsors (${cosponsors.length})</button>` : ""}
+              ${cosponsors.length ? `<div id="billCosponsorsWrap" hidden><ul class="bill-cosponsors">${cosponsors.map((c) => `<li class="bill-cosponsor"><span class="bill-cosponsor__name">${escHtml(c.fullName)}</span>${c.sponsorshipDate ? `<span class="bill-cosponsor__meta muted">Cosponsor • Joined ${escHtml(c.sponsorshipDate)}</span>` : `<span class="bill-cosponsor__meta muted">Cosponsor</span>`}</li>`).join("")}</ul></div>` : ""}
             </section>
           ` : ""}
 
@@ -517,7 +511,20 @@
     try {
       const actionsJson = await fetchCongressJson(`/v3/bill/${parsed.congress}/${parsed.type}/${parsed.number}/actions`, { format: "json", limit: 50 });
       const acts = actionsJson?.actions || actionsJson?.bill?.actions || [];
-      out.actions = Array.isArray(acts) ? acts.slice(0, 20) : [];
+      if (Array.isArray(acts)) {
+        const seen = new Set();
+        const unique = [];
+        for (const a of acts) {
+          const key = `${String(a?.actionDate || "")}::${String(a?.text || "").trim()}::${String(a?.type || "")}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          unique.push(a);
+          if (unique.length >= 20) break;
+        }
+        out.actions = unique;
+      } else {
+        out.actions = [];
+      }
     } catch (e) {
       console.warn("[bill] actions fetch failed", e);
     }
@@ -798,17 +805,19 @@ ${prior}` : "",
 
   function wireCosponsorsToggle() {
     const btn = document.getElementById("billCosponsorsToggle");
-    if (!btn) return;
+    const wrap = document.getElementById("billCosponsorsWrap");
+    if (!btn || !wrap) return;
     btn.addEventListener("click", () => {
       const expanded = btn.getAttribute("data-expanded") === "1";
-      const extras = document.querySelectorAll(".bill-cosponsor--extra");
-      const baseCount = document.querySelectorAll(".bill-cosponsor:not(.bill-cosponsor--extra)").length;
-      extras.forEach((el) => {
-        if (expanded) el.setAttribute("hidden", "");
-        else el.removeAttribute("hidden");
-      });
-      btn.setAttribute("data-expanded", expanded ? "0" : "1");
-      btn.textContent = expanded ? `Show all cosponsors (${baseCount + extras.length})` : "Show fewer";
+      if (expanded) {
+        wrap.setAttribute("hidden", "");
+        btn.setAttribute("data-expanded", "0");
+        btn.textContent = btn.textContent.replace("Hide cosponsors", "Show cosponsors");
+      } else {
+        wrap.removeAttribute("hidden");
+        btn.setAttribute("data-expanded", "1");
+        btn.textContent = btn.textContent.replace("Show cosponsors", "Hide cosponsors");
+      }
     });
   }
 
