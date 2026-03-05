@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Congress Committees</title>
+    <meta name="description" content="Browse congressional committees and recent bills." />
+    <link rel="stylesheet" href="./css/styles.css" />
+    <script src="./js/app.js" defer></script>
+    <script src="./js/committee.js" defer></script>
+    <link rel="icon" href="./assets/favicon.ico" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <a class="brand" href="./index.html" aria-label="Home">
+          <span class="brand__mark"></span>
+          <span class="brand__text">Congress Bill Search</span>
+        </a>
+        <nav class="topbar__nav" aria-label="Primary">
+          <a href="./index.html" class="topbar__link">Search</a>
+          <a href="./committee.html" class="topbar__link is-active">Committees</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="section">
+        <div class="container section__header">
+          <h1 class="section__title">Committees</h1>
+          <div class="section__sub">Grouped by chamber and sorted alphabetically.</div>
+        </div>
+        <div class="container" id="committeeMount">
+          <div class="panel"><div class="panel__body muted">Loading committees…</div></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -35,11 +35,39 @@
       <section class="section">
         <div class="container">
           <div class="bill-layout">
-            <article class="panel bill-main" id="billMain">
-              <div class="panel__body">
-                <div class="muted">Loading bill details…</div>
-              </div>
-            </article>
+            <div class="bill-main-col">
+              <article class="panel bill-main" id="billHeader">
+                <div class="panel__body">
+                  <div class="muted">Loading bill header…</div>
+                </div>
+              </article>
+
+              <article class="panel bill-qa-panel" id="billQaCard">
+                <div class="panel__head"><div class="panel__title">Ask a question about the bill</div></div>
+                <div class="panel__body">
+                  <form id="billQaForm" class="bill-qa__form">
+                    <input id="billQaInput" class="bill-qa__input" type="text" autocomplete="off" placeholder="Ask about this bill…" />
+                    <button type="submit" class="bill-qa__btn">Ask</button>
+                  </form>
+                  <div id="billQaMessages" class="bill-qa__messages" hidden></div>
+                </div>
+              </article>
+
+              <article class="panel bill-main" id="billContent">
+                <div class="panel__body">
+                  <div class="muted">Loading bill details…</div>
+                </div>
+              </article>
+
+              <article class="panel bill-text" id="billFullText">
+                <div class="panel__head">
+                  <div class="panel__title">Bill text</div>
+                </div>
+                <div class="panel__body">
+                  <div class="muted">Loading bill text…</div>
+                </div>
+              </article>
+            </div>
 
             <aside class="panel bill-rail">
               <div class="panel__head">
