@@ -118,6 +118,26 @@
           </div>
 
           <div class="panel">
+                      <div class="panel__body">
+            <div id="aiAnswerBody" class="answer-body">
+              <div class="muted">Ask a question above to get a plain-English answer.</div>
+            </div>
+
+            <div id="aiSourcesLinks"></div>
+
+            <form id="aiFollowupForm" class="answer-followup" style="margin-top:14px;">
+              <div class="answer-followup__row">
+                <input
+                  id="aiFollowupInput"
+                  type="text"
+                  class="answer-followup__input"
+                  placeholder="Ask a follow-up question…"
+                  autocomplete="off"
+                />
+                <button type="submit" class="btn btn--primary">Ask</button>
+              </div>
+            </form>
+          </div>
             <div class="panel__body" id="results">
               <div class="muted">Search results will appear here.</div>
             </div>
