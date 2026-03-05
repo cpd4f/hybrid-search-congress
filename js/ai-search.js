@@ -984,20 +984,19 @@
         <article class="billcard">
           <div class="billcard__meta">
             <span class="chip">${escHtml(short || d.id)}</span>
-            <span class="muted">${escHtml(epochToDate(d.update_date))}</span>
           </div>
-          <h3 class="billcard__title">${escHtml(d.title || "(Untitled bill)")}</h3>
-          <div class="billcard__sub muted">
-            ${escHtml(d.chamber || "")}
-            ${committee ? ` • ${escHtml(committee)}` : ""}
+          <h3 class="billcard__title">
+            <a class="billcard__titlelink" href="./bill.html?id=${encodeURIComponent(d.id)}">${escHtml(d.title || "(Untitled bill)")}</a>
+          </h3>
+          <div class="billcard__sub billcard__tags">
+            ${d.chamber ? `<span class="billcard__subtag">${escHtml(d.chamber)}</span>` : ""}
+            ${committee ? `<span class="billcard__subtag">${escHtml(committee)}</span>` : ""}
+            <span class="billcard__subtag">
+              <span class="${partyClass}" aria-hidden="true"></span>
+              <span>${escHtml(partyLabel)}</span>
+            </span>
           </div>
-          <div class="billcard__sub" style="margin-top:8px;">
-            <span class="${partyClass}" aria-hidden="true"></span>
-            <span class="muted">${escHtml(partyLabel)}</span>
-          </div>
-          <div style="margin-top:12px;">
-            <a class="link" href="./bill.html?id=${encodeURIComponent(d.id)}">Open bill</a>
-          </div>
+          <span class="billcard__date muted">${escHtml(epochToDate(d.update_date))}</span>
         </article>
       `;
     }).join("");
