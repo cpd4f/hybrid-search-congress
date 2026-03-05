@@ -30,6 +30,7 @@ on:
           - upsert_new_updated
           - upsert_new_updated_fix_tracking
           - reindex_all
+          - update_status_only
 
 permissions:
   contents: write
