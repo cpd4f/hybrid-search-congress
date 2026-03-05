@@ -663,10 +663,21 @@ img { max-width: 100%; }
 }
 .bill-text__html {
   max-height: 1200px;
+  max-width: 100%;
   overflow: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 12px;
+}
+.bill-text__html pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  margin: 0;
+}
+.bill-text .panel__body {
+  overflow-x: hidden;
 }
 
 
@@ -793,4 +804,5 @@ div#billQaMessages {
   .bill-layout {
     grid-template-columns: 1fr;
   }
+  .bill-text__html { padding: 10px; }
 }

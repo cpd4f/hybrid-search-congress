@@ -365,7 +365,26 @@
     }
 
     const json = await res.json();
-    return (json?.results?.[0]?.hits || []).map(h => h.document).filter(Boolean);
+    const currentId = String(doc?.id || "").toLowerCase();
+    const currentParsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
+
+    return (json?.results?.[0]?.hits || [])
+      .map(h => h.document)
+      .filter(Boolean)
+      .filter((d) => {
+        const id = String(d?.id || "").toLowerCase();
+        if (currentId && id === currentId) return false;
+
+        const parsed = parseBillId(d?.id) || parseBillId(`${d?.congress || ""}-${d?.type || ""}-${d?.number || ""}`);
+        if (currentParsed && parsed) {
+          if (String(currentParsed.congress) === String(parsed.congress)
+            && String(currentParsed.type) === String(parsed.type)
+            && String(currentParsed.number) === String(parsed.number)) {
+            return false;
+          }
+        }
+        return true;
+      });
   }
 
   function renderBillDetail(doc, detailData = {}) {
