@@ -873,3 +873,69 @@ div#billQaMessages {
     grid-template-columns: 1fr;
   }
 }
+
+.results-grid > .panel:nth-child(2) {
+    box-shadow: none;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+}
+
+.results-grid > .panel:nth-child(2) div#results {
+    padding: 0;
+}
+
+div#filtersMount {
+    padding: 0;
+}
+
+div#filtersMount div#filtersAccordion {
+    gap: 0;
+}
+
+div#filtersMount div#filtersAccordion details.filter-acc__item {
+    box-shadow: none;
+    border-width: 0;
+    border-radius: 0;
+}
+
+div#filtersMount div#filtersAccordion details.filter-acc__item + details.filter-acc__item {
+    border-top-width: 1px;
+}
+
+div#filtersMount ~ div#filtersAccordion .filters__actions {}
+
+div#filtersMount div#filtersAccordion + .filters__actions {
+    padding: 0px 18px 18px 18px;
+}
+
+.results-note {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.committee-card__bill-title {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.committee-card__bill-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.committee-card__chip {
+  position: relative;
+  padding-left: 20px;
+}
+
+.committee-card__dot {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+}

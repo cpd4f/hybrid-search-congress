@@ -47,10 +47,15 @@
       });
   }
 
-  async function fetchCongressJson(path) {
+  async function fetchCongressJson(path, extraParams = {}) {
     const u = new URL(CONGRESS_WORKER_BASE);
     u.searchParams.set("path", path);
     u.searchParams.set("format", "json");
+    Object.keys(extraParams).forEach((key) => {
+      if (extraParams[key] !== undefined && extraParams[key] !== null) {
+        u.searchParams.set(key, String(extraParams[key]));
+      }
+    });
 
     const res = await fetch(u.toString());
     if (!res.ok) {
@@ -60,6 +65,28 @@
     return res.json();
   }
 
+
+  async function fetchAllCommittees() {
+    const limit = 250;
+    let offset = 0;
+    const all = [];
+
+    while (true) {
+      const payload = await fetchCongressJson("/v3/committee", { limit, offset });
+      const rows = payload?.committees || payload?.committee || payload?.items || [];
+      if (!Array.isArray(rows) || !rows.length) break;
+
+      all.push(...rows);
+
+      if (rows.length < limit) break;
+      offset += limit;
+
+      if (offset > 5000) break;
+    }
+
+    return { committees: all };
+  }
+
   async function fetchCommitteeBills(name) {
     const u = new URL(TS_DOCS_SEARCH);
     u.searchParams.set("q", "*");
@@ -67,7 +94,7 @@
     u.searchParams.set("per_page", "3");
     u.searchParams.set("page", "1");
     u.searchParams.set("sort_by", "update_date:desc");
-    u.searchParams.set("include_fields", "id,title,type,number,update_date");
+    u.searchParams.set("include_fields", "id,title,type,number,update_date,sponsor_party");
     u.searchParams.set("filter_by", `committees:=[${JSON.stringify(name)}]`);
 
     const res = await fetch(u.toString());
@@ -98,6 +125,15 @@
     return [type, number].filter(Boolean).join(" ").trim() || bill?.id || "Bill";
   }
 
+
+  function sponsorDotClass(party) {
+    const p = String(party || "").toUpperCase();
+    if (p === "R") return "party-dot party-dot--r";
+    if (p === "D") return "party-dot party-dot--d";
+    if (p === "I") return "party-dot party-dot--i";
+    return "party-dot party-dot--u";
+  }
+
   function render(grouped, billsByCommittee) {
     const mount = document.getElementById("committeeMount");
     if (!mount) return;
@@ -111,12 +147,22 @@
       const cards = committees.map((committee) => {
         const bills = billsByCommittee.get(committee.name) || [];
         const billsHtml = bills.length
-          ? bills.map((bill) => `
+          ? bills.map((bill) => {
+            const dotClass = sponsorDotClass(bill?.sponsor_party);
+            return `
             <li class="committee-card__bill-item">
-              <a href="./bill.html?id=${encodeURIComponent(bill.id || "")}">${escHtml(billLabel(bill))}</a>
-              <span class="muted">${escHtml(epochToDate(bill.update_date))}</span>
-            </li>`).join("")
+              <a class="committee-card__bill-title" href="./bill.html?id=${encodeURIComponent(bill.id || "")}">${escHtml(bill.title || "Untitled bill")}</a>
+              <div class="committee-card__bill-meta">
+                <span class="chip committee-card__chip"><span class="${dotClass} committee-card__dot" aria-hidden="true"></span>${escHtml(billLabel(bill))}</span>
+                <span class="muted">${escHtml(epochToDate(bill.update_date))}</span>
+              </div>
+            </li>`;
+          }).join("")
           : '<li class="muted">No recent indexed bills.</li>';
+
+        const viewMore = bills.length
+          ? `<a class="bill-detail__button committee-card__more" href="./index.html?committee=${encodeURIComponent(committee.name)}">View More</a>`
+          : "";
 
         return `
           <article class="panel committee-card">
@@ -125,7 +171,7 @@
             </div>
             <div class="panel__body">
               <ul class="committee-card__bill-list">${billsHtml}</ul>
-              <a class="bill-detail__button committee-card__more" href="./index.html?committee=${encodeURIComponent(committee.name)}">View More</a>
+              ${viewMore}
             </div>
           </article>
         `;
@@ -147,7 +193,7 @@
     if (!mount) return;
 
     try {
-      const payload = await fetchCongressJson("/v3/committee");
+      const payload = await fetchAllCommittees();
       const committees = normalizeCommittees(payload);
       const grouped = groupByChamber(committees);
 

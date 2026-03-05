@@ -1049,7 +1049,11 @@
       </div>
     `;
 
-    mount.innerHTML = `${cards}${pagination}`;
+    const committeeNote = state.activeCommitteeLabel
+      ? `<div class="results-note muted">Showing bills tagged to ${escHtml(state.activeCommitteeLabel)}</div>`
+      : "";
+
+    mount.innerHTML = `${committeeNote}${cards}${pagination}`;
   }
 
   /* ---------------- Search orchestration ---------------- */
@@ -1059,7 +1063,8 @@
     lastHits: [],
     lastUserQuery: "",
     lastSearchFound: 0,
-    currentPage: 1
+    currentPage: 1,
+    activeCommitteeLabel: ""
   };
 
   async function runAnswerFlow({ primaryQuery, question, hits }) {
@@ -1227,6 +1232,10 @@
         if (!state.lastUserQuery) return;
         try {
           await runSearch(state.lastUserQuery, nextPage);
+          const resultsSection = document.getElementById("resultsSection");
+          if (resultsSection) {
+            resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
         } catch (e) {
           console.error(e);
         }
@@ -1237,18 +1246,23 @@
     const committeeParam = getParam("committee");
     if (committeeParam) {
       filterState.committees.add(committeeParam);
+      state.activeCommitteeLabel = committeeParam;
       syncAllDropdowns();
       updateAllBadges();
+      showResultsSection();
+      const resultsMount = document.getElementById("results");
+      if (resultsMount) {
+        resultsMount.innerHTML = `<div class="results-note muted">Showing bills tagged to ${escHtml(committeeParam)}</div><div class="muted" style="margin-top:8px;">Submit a search to load matching bills.</div>`;
+      }
     }
     const qParam = getParam("q");
     if ($input.length && qParam) {
       $input.val(qParam);
     }
 
-    const initialQuery = qParam || (committeeParam ? "bill" : "");
-    if (initialQuery && $input.length) {
+    if (qParam && $input.length) {
       try {
-        await runSearch(initialQuery, 1);
+        await runSearch(qParam, 1);
       } catch (e) {
         console.error(e);
       }
