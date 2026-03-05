@@ -988,13 +988,13 @@
           <h3 class="billcard__title">
             <a class="billcard__titlelink" href="./bill.html?id=${encodeURIComponent(d.id)}">${escHtml(d.title || "(Untitled bill)")}</a>
           </h3>
-          <div class="billcard__sub billcard__tags">
-            ${d.chamber ? `<span class="billcard__subtag">${escHtml(d.chamber)}</span>` : ""}
-            ${committee ? `<span class="billcard__subtag">${escHtml(committee)}</span>` : ""}
-            <span class="billcard__subtag">
-              <span class="${partyClass}" aria-hidden="true"></span>
-              <span>${escHtml(partyLabel)}</span>
-            </span>
+          <div class="billcard__sub muted">
+            ${escHtml(d.chamber || "")}
+            ${committee ? ` • ${escHtml(committee)}` : ""}
+          </div>
+          <div class="billcard__sub" style="margin-top:8px;">
+            <span class="${partyClass}" aria-hidden="true"></span>
+            <span class="muted">${escHtml(partyLabel)}</span>
           </div>
           <span class="billcard__date muted">${escHtml(epochToDate(d.update_date))}</span>
         </article>
