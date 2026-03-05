@@ -56,6 +56,7 @@
   const MAX_COMMITTEES = 250;
   const MAX_POLICY = 120;
   const MAX_STATUS = 80;
+  const SHOW_FILTER_COUNTS = false; // set true if you later implement dynamic counts per query
 
   // Endpoints (retain your working routes)
   const TS_DOCS_SEARCH =
@@ -221,6 +222,34 @@
     return t.split(/\s+/).map(w => w.slice(0, 1).toUpperCase() + w.slice(1)).join(" ");
   }
 
+  function sortStatusOptions(options) {
+    const order = [
+      "Introduced",
+      "CommitteeConsideration",
+      "FloorConsideration",
+      "FailedOneChamber",
+      "PassedOneChamber",
+      "PassedBothChambers",
+      "ResolvingDifferences",
+      "ToPresident",
+      "VetoActions",
+      "BecameLaw"
+    ];
+
+    const norm = (v) => String(v || "").replace(/\s+/g, "").toLowerCase();
+    const orderMap = new Map(order.map((v, i) => [norm(v), i]));
+
+    return (options || [])
+      .slice()
+      .sort((a, b) => {
+        const ai = orderMap.has(norm(a.value)) ? orderMap.get(norm(a.value)) : 999;
+        const bi = orderMap.has(norm(b.value)) ? orderMap.get(norm(b.value)) : 999;
+        if (ai !== bi) return ai - bi;
+        return String(a.label || a.value).localeCompare(String(b.label || b.value));
+      });
+  }
+
+
   /* ---------------- Filter State ---------------- */
 
   const filterState = {
@@ -305,6 +334,48 @@
           <button type="button" class="filters__clear" id="clearFiltersBtn">Clear filters</button>
         </div>
       </div>
+
+    // Accordion behavior:
+    // - Allow multiple panels open at once (Bootstrap-style "stay open")
+    // - Smooth slide animation using jQuery
+    if (window.jQuery) {
+      const $mount = window.jQuery(mount);
+
+      // Start with panels hidden unless the <details> is already open
+      $mount.find(".filter-acc__item").each(function () {
+        const $details = window.jQuery(this);
+        const $panel = $details.find(".filter-acc__panel");
+        if ($details.prop("open")) $panel.show();
+        else $panel.hide();
+      });
+
+      // Click + keyboard support on <summary>
+      $mount.on("click", ".filter-acc__toggle", function (e) {
+        e.preventDefault();
+
+        const $summary = window.jQuery(this);
+        const $details = $summary.closest("details");
+        const $panel = $details.find(".filter-acc__panel");
+        const isOpen = $details.prop("open");
+
+        if (isOpen) {
+          $panel.stop(true, true).slideUp(180, function () {
+            $details.prop("open", false);
+          });
+        } else {
+          $details.prop("open", true);
+          $panel.hide().stop(true, true).slideDown(180);
+        }
+      });
+
+      $mount.on("keydown", ".filter-acc__toggle", function (e) {
+        // Space/Enter should behave like click
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          window.jQuery(this).trigger("click");
+        }
+      });
+    }
     `;
 
 
@@ -424,7 +495,7 @@
           : (filterState[key] && filterState[key].has(String(o.value)));
 
       const label = o.label || o.value;
-      const count = Number.isFinite(o.count) && o.count > 0 ? ` <span class="filter-opt__count">(${o.count})</span>` : "";
+            const count = "";
 
       return `
         <label class="filter-opt" for="${escHtml(id)}">
@@ -483,7 +554,7 @@
         ? filterState.sponsor_party
         : filterState[key];
 
-    const count = set ? set.size : 0;
+          const count = "";
     if (!count) {
       badge.textContent = "";
       badge.classList.remove("is-on");
@@ -556,7 +627,7 @@
     // policy
     facetOptions.policy_area = countsToOptions(map.policy_area, MAX_POLICY, (v) => v);
     // status
-    facetOptions.status = countsToOptions(map.status, MAX_STATUS, (v) => titleCaseFromToken(v));
+    facetOptions.status = sortStatusOptions(countsToOptions(map.status, MAX_STATUS, (v) => titleCaseFromToken(v)));
     // sponsor_party: keep AP labels and only include values we actually have
     const partyCounts = countsToOptions(map.sponsor_party, 10, (v) => sponsorPartyLabel(v));
     // overwrite counts for R/D/I when present, and append other party values if any
