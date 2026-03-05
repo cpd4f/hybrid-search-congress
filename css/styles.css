@@ -367,17 +367,41 @@ img { max-width: 100%; }
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-sm);
   transition: transform .15s ease, box-shadow .15s ease;
-  min-height: 170px;
+  min-height: 190px;
+  display: flex;
+  flex-direction: column;
 }
 .billcard:hover {
   transform: translateY(-3px);
   box-shadow: var(--shadow-md);
 }
-.billcard__meta { display: flex; flex-direction: column; gap: 2px; }
-.billcard__id { font-weight: 800; font-size: 13px; }
+.billcard__meta { display: flex; flex-direction: column; gap: 8px; }
+.billcard__bill-tag {
+  align-self: flex-start;
+  font-weight: 700;
+  letter-spacing: .1px;
+  background: rgba(37, 99, 235, 0.08);
+  border-color: rgba(37, 99, 235, 0.28);
+}
 .billcard__status { font-size: 12px; color: var(--color-muted); }
-.billcard__title { margin-top: 10px; margin-bottom: 16px; font-weight: 700; line-height: 1.4; }
-.billcard__footer { display: flex; flex-direction: column; gap: 6px; }
+.billcard__title {
+  margin: 10px 0 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.billcard__title-link {
+  color: var(--color-text);
+  text-decoration: none;
+}
+.billcard__title-link:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+.billcard__footer { display: flex; flex-direction: column; gap: 6px; margin-top: auto; }
 .billcard__committee, .billcard__date { font-size: 12px; color: var(--color-muted); }
 
 /* Party dot */

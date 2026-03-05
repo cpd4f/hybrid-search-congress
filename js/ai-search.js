@@ -982,21 +982,23 @@
         const status = d.status ? titleCaseFromToken(d.status) : "";
 
         return `
-          <a class="billcard" href="./bill.html?id=${encodeURIComponent(d.id)}">
+          <article class="billcard">
             <span class="${dot}" aria-hidden="true" title="${escHtml(sponsorPartyLabel(d.sponsor_party))}"></span>
 
             <div class="billcard__meta">
-              <div class="billcard__id">${escHtml(billShortId(d))}</div>
+              <span class="chip billcard__bill-tag">${escHtml(billShortId(d) || d.id || "Bill")}</span>
               <div class="billcard__status">${escHtml(d.chamber || "")}${d.congress ? " • " + escHtml(String(d.congress)) + "th" : ""}${status ? " • " + escHtml(status) : ""}</div>
             </div>
 
-            <div class="billcard__title">${escHtml(d.title || "")}</div>
+            <h3 class="billcard__title">
+              <a class="billcard__title-link" href="./bill.html?id=${encodeURIComponent(d.id)}">${escHtml(d.title || "Untitled bill")}</a>
+            </h3>
 
             <div class="billcard__footer">
               <div class="billcard__committee">${escHtml(committee || "Committee TBD")}</div>
               <div class="billcard__date">${updated ? "Updated " + escHtml(updated) : ""}</div>
             </div>
-          </a>
+          </article>
         `;
       })
       .join("");
