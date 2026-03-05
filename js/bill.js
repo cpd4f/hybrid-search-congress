@@ -356,11 +356,13 @@
   }
 
   function renderBillDetail(doc, detailData = {}) {
-    const mount = document.getElementById("billMain");
-    if (!mount) return;
+    const headerMount = document.getElementById("billHeader");
+    const contentMount = document.getElementById("billContent");
+    if (!headerMount || !contentMount) return;
 
     if (!doc) {
-      mount.innerHTML = `<div class="panel__body"><div class="muted">Bill not found.</div></div>`;
+      headerMount.innerHTML = `<div class="panel__body"><div class="muted">Bill not found.</div></div>`;
+      contentMount.innerHTML = `<div class="panel__body"><div class="muted">No bill details available.</div></div>`;
       return;
     }
 
@@ -377,18 +379,23 @@
     const shownCosponsors = originals.length ? originals : cosponsors.slice(0, 1);
     const hiddenCosponsors = cosponsors.filter((c) => !shownCosponsors.includes(c));
 
-    mount.innerHTML = `
+    headerMount.innerHTML = `
       <div class="panel__body">
-        <article class="bill-detail">
+        <article class="bill-detail bill-detail--header">
           <span class="${partyClass} billcard__party-dot" aria-hidden="true"></span>
-
           <div class="bill-detail__head">
             <span class="chip">${escHtml(short)}</span>
             ${doc.status ? `<span class="chip billcard__tag">${escHtml(titleCaseFromToken(doc.status))}</span>` : ""}
           </div>
-
           <h1 class="bill-detail__title">${escHtml(doc.title || "(Untitled bill)")}</h1>
+          ${doc.latest_action_text ? `<section class="bill-detail__section"><h2 class="bill-detail__sectiontitle">Latest action</h2><p class="bill-detail__summary">${escHtml(doc.latest_action_text)}</p></section>` : ""}
+        </article>
+      </div>
+    `;
 
+    contentMount.innerHTML = `
+      <div class="panel__body">
+        <article class="bill-detail">
           <div class="bill-detail__facts">
             ${doc.chamber ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Chamber</div><div class="bill-detail__fact-value">${escHtml(doc.chamber)}</div></div>` : ""}
             ${doc.congress ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Congress</div><div class="bill-detail__fact-value">${escHtml(String(doc.congress))}th Congress</div></div>` : ""}
@@ -422,19 +429,7 @@
             </section>
           ` : ""}
 
-          ${doc.latest_action_text ? `
-            <section class="bill-detail__section">
-              <h2 class="bill-detail__sectiontitle">Latest action</h2>
-              <p class="bill-detail__summary">${escHtml(doc.latest_action_text)}</p>
-            </section>
-          ` : ""}
-
-          ${actions.length ? `
-            <section class="bill-detail__section">
-              <h2 class="bill-detail__sectiontitle">Action timeline</h2>
-              <ul class="bill-actions">${actions.map((a) => `<li class="bill-action"><div class="bill-action__date muted">${escHtml(a.actionDate || "")}</div><div class="bill-action__text">${escHtml(a.text || a.type || "")}</div></li>`).join("")}</ul>
-            </section>
-          ` : ""}
+          ${actions.length ? `<section class="bill-detail__section"><h2 class="bill-detail__sectiontitle">Action timeline</h2><ul class="bill-actions">${actions.map((a) => `<li class="bill-action"><div class="bill-action__date muted">${escHtml(a.actionDate || "")}</div><div class="bill-action__text">${escHtml(a.text || a.type || "")}</div></li>`).join("")}</ul></section>` : ""}
 
           ${congressUrl ? `<div class="bill-detail__actions"><a class="bill-detail__button" href="${escHtml(congressUrl)}" target="_blank" rel="noopener noreferrer">View on Congress.gov</a></div>` : ""}
         </article>
@@ -869,8 +864,10 @@ ${prior}` : "",
       renderRelated(related);
     } catch (e) {
       console.error(e);
-      const main = document.getElementById("billMain");
-      if (main) main.innerHTML = `<div class="panel__body"><div class="muted">Failed to load bill details.</div></div>`;
+      const main = document.getElementById("billHeader");
+      if (main) main.innerHTML = `<div class="panel__body"><div class="muted">Failed to load bill header.</div></div>`;
+      const content = document.getElementById("billContent");
+      if (content) content.innerHTML = `<div class="panel__body"><div class="muted">Failed to load bill details.</div></div>`;
       const textMount = document.getElementById("billFullText");
       if (textMount) textMount.innerHTML = `<div class="panel__head"><div class="panel__title">Bill text</div></div><div class="panel__body"><div class="muted">Failed to load bill text.</div></div>`;
       const rail = document.getElementById("relatedBills");
