@@ -93,10 +93,25 @@
     return { congress, type, number };
   }
 
+  function billTypeToSlug(type) {
+    const t = String(type || "").toLowerCase();
+    const map = {
+      hr: "house-bill",
+      s: "senate-bill",
+      hres: "house-resolution",
+      sres: "senate-resolution",
+      hjres: "house-joint-resolution",
+      sjres: "senate-joint-resolution",
+      hconres: "house-concurrent-resolution",
+      sconres: "senate-concurrent-resolution"
+    };
+    return map[t] || `${t}-bill`;
+  }
+
   function congressGovBillUrl(doc) {
     const parsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
     if (!parsed) return "";
-    return `https://www.congress.gov/bill/${parsed.congress}th-congress/${parsed.type.toLowerCase()}-bill/${parsed.number}`;
+    return `https://www.congress.gov/bill/${parsed.congress}th-congress/${billTypeToSlug(parsed.type)}/${parsed.number}`;
   }
 
   async function fetchBillById(id) {
@@ -301,7 +316,7 @@
     return (json?.results?.[0]?.hits || []).map(h => h.document).filter(Boolean);
   }
 
-  function renderBillDetail(doc) {
+  function renderBillDetail(doc, congressUrlOverride) {
     const mount = document.getElementById("billMain");
     if (!mount) return;
 
@@ -315,7 +330,7 @@
     const partyLabel = sponsorPartyLabel(doc.sponsor_party);
     const partyClass = sponsorDotClass(doc.sponsor_party);
     const officialSummary = doc.official_summary_text || doc.official_summary || "Official summary unavailable in index data.";
-    const congressUrl = congressGovBillUrl(doc);
+    const congressUrl = congressUrlOverride || congressGovBillUrl(doc);
 
     mount.innerHTML = `
       <div class="panel__body">
@@ -335,12 +350,9 @@
             ${committee ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Committee</div><div class="bill-detail__fact-value">${escHtml(committee)}</div></div>` : ""}
             ${doc.policy_area ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Policy area</div><div class="bill-detail__fact-value">${escHtml(doc.policy_area)}</div></div>` : ""}
             <div class="bill-detail__fact"><div class="bill-detail__fact-label">Sponsor party</div><div class="bill-detail__fact-value">${escHtml(partyLabel)}</div></div>
-          </div>
-
-          <div class="bill-detail__meta muted">
-            ${doc.sponsor_state ? `Sponsor state: ${escHtml(doc.sponsor_state)} • ` : ""}
-            ${Number.isFinite(doc.cosponsor_count) ? `Cosponsors: ${escHtml(String(doc.cosponsor_count))} • ` : ""}
-            Updated: ${escHtml(epochToDate(doc.update_date) || "N/A")}
+            ${Number.isFinite(doc.cosponsor_count) ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Cosponsors</div><div class="bill-detail__fact-value">${escHtml(String(doc.cosponsor_count))}</div></div>` : ""}
+            <div class="bill-detail__fact"><div class="bill-detail__fact-label">Updated</div><div class="bill-detail__fact-value">${escHtml(epochToDate(doc.update_date) || "N/A")}</div></div>
+            ${doc.status ? `<div class="bill-detail__fact"><div class="bill-detail__fact-label">Status</div><div class="bill-detail__fact-value">${escHtml(titleCaseFromToken(doc.status))}</div></div>` : ""}
           </div>
 
           <section class="bill-detail__section">
@@ -384,6 +396,25 @@
     } catch (e) {
       throw new Error(`Congress proxy returned invalid JSON for ${path}`);
     }
+  }
+
+  async function fetchCongressPermalink(doc) {
+    const parsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
+    const fallback = congressGovBillUrl(doc);
+    if (!parsed) return fallback;
+
+    try {
+      const json = await fetchCongressJson(`/v3/bill/${parsed.congress}/${parsed.type}/${parsed.number}`, { format: "json" });
+      const candidate = json?.bill?.url || json?.url || "";
+      if (candidate && /^https:\/\/www\.congress\.gov\//i.test(candidate)) {
+        console.info("[bill] congress permalink from API", candidate);
+        return candidate;
+      }
+    } catch (e) {
+      console.warn("[bill] congress permalink lookup failed; using fallback", e);
+    }
+
+    return fallback;
   }
 
   async function fetchHtmlDocumentFromUrl(rawUrl) {
@@ -517,8 +548,21 @@
 
     try {
       const doc = await fetchBillById(id);
-      renderBillDetail(doc);
-      if (!doc) return;
+      if (!doc) {
+        renderBillDetail(null);
+        return;
+      }
+
+      const congressPermalink = await fetchCongressPermalink(doc);
+      renderBillDetail(doc, congressPermalink);
+
+      try {
+        const textData = await fetchBillText(doc);
+        renderBillText(textData, doc);
+      } catch (textErr) {
+        console.warn("[bill-text] failed to load bill text", textErr);
+        renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", html: "", pdfUrl: "" }, doc);
+      }
 
       try {
         const textData = await fetchBillText(doc);
