@@ -316,8 +316,7 @@ img { max-width: 100%; }
   -ms-overflow-style: none;
   scrollbar-width: none;
 
-  /* “peek” padding so edges never clip */
-  padding: 0 var(--carousel-peek) 10px var(--carousel-peek);
+  padding: 0 0 10px 0;
 
   /* Make it feel snappy (less inertial drift) */
   overscroll-behavior-x: contain;
@@ -373,7 +372,13 @@ img { max-width: 100%; }
 }
 .billcard:hover {
   transform: translateY(-3px);
-  box-shadow: var(--shadow-md);
+  box-shadow: none;
+}
+.billcard__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 .billcard__meta {
   display: flex;
