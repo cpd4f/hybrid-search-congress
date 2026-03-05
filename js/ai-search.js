@@ -307,22 +307,6 @@
       </div>
     `;
 
-    // Accordion behavior: keep at most one open at a time
-    mount.addEventListener(
-      "toggle",
-      function (ev) {
-        const details = ev.target;
-        if (!(details instanceof HTMLDetailsElement)) return;
-        if (!details.classList.contains("filter-acc__item")) return;
-        if (!details.open) return;
-
-        const all = mount.querySelectorAll(".filter-acc__item");
-        all.forEach((d) => {
-          if (d !== details) d.open = false;
-        });
-      },
-      true
-    );
 
     // Change events (checkbox/radio)
     mount.addEventListener("change", function (ev) {
