@@ -335,9 +335,7 @@
         </div>
       </div>
 
-    // Accordion behavior:
     // - Allow multiple panels open at once (Bootstrap-style "stay open")
-    // - Smooth slide animation using jQuery
     if (window.jQuery) {
       const $mount = window.jQuery(mount);
 
@@ -1273,4 +1271,60 @@
 
   if (window.onReady) window.onReady(boot);
   else document.addEventListener("DOMContentLoaded", boot);
+})();
+
+/* =========================================================
+   Filters accordion UX
+   - Allows multiple panels open (no "close others")
+   - jQuery slideDown/slideUp for smooth animation
+========================================================= */
+(function () {
+  function bindFiltersAccordion(mountEl) {
+    if (!mountEl) return;
+    if (!window.jQuery) return;
+
+    var $mount = window.jQuery(mountEl);
+
+    // Avoid double-binding
+    if ($mount.data("filtersAccBound")) return;
+    $mount.data("filtersAccBound", true);
+
+    // Sync panels with <details open> state on first paint
+    $mount.find("details.filter-acc__item").each(function () {
+      var $details = window.jQuery(this);
+      var $panel = $details.find(".filter-acc__panel").first();
+      if (!$panel.length) return;
+
+      if ($details.prop("open")) $panel.show();
+      else $panel.hide();
+    });
+
+    // Intercept summary click so we can animate
+    $mount.on("click", ".filter-acc__toggle", function (e) {
+      e.preventDefault();
+
+      var $summary = window.jQuery(this);
+      var $details = $summary.closest("details.filter-acc__item");
+      var $panel = $details.find(".filter-acc__panel").first();
+      if (!$panel.length) return;
+
+      var isOpen = $details.prop("open");
+
+      if (isOpen) {
+        $panel.stop(true, true).slideUp(180, function () {
+          $details.prop("open", false);
+        });
+      } else {
+        $details.prop("open", true);
+        $panel.hide().stop(true, true).slideDown(180);
+      }
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var mount = document.getElementById("filtersMount");
+    if (mount) bindFiltersAccordion(mount);
+  });
+
+  window.__bindFiltersAccordion = bindFiltersAccordion;
 })();
