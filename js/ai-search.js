@@ -159,11 +159,43 @@
     return docs.slice(0, Math.max(1, limit || 1));
   }
 
+  function titleCaseFromToken(s) {
+    const t = String(s || "").replace(/_/g, " ").trim();
+    if (!t) return "";
+    return t.split(/\s+/).map(w => w.slice(0, 1).toUpperCase() + w.slice(1)).join(" ");
+  }
+
+  function sortStatusOptions(options) {
+    const order = [
+      "Introduced",
+      "CommitteeConsideration",
+      "FloorConsideration",
+      "FailedOneChamber",
+      "PassedOneChamber",
+      "PassedBothChambers",
+      "ResolvingDifferences",
+      "ToPresident",
+      "VetoActions",
+      "BecameLaw"
+    ];
+
+    const norm = (v) => String(v || "").replace(/\s+/g, "").toLowerCase();
+    const orderMap = new Map(order.map((v, i) => [norm(v), i]));
+
+    return (options || [])
+      .slice()
+      .sort((a, b) => {
+        const ai = orderMap.has(norm(a.value)) ? orderMap.get(norm(a.value)) : 999;
+        const bi = orderMap.has(norm(b.value)) ? orderMap.get(norm(b.value)) : 999;
+        if (ai !== bi) return ai - bi;
+        return String(a.label || a.value).localeCompare(String(b.label || b.value));
+      });
+  }
+
   function buildSourcesBundle(docs) {
-    // Keep this compact (token-efficient)
-    return docs.map((d, idx) => {
-      const committees = Array.isArray(d.committees) ? d.committees.slice(0, 3) : [];
-      const subjects = Array.isArray(d.subjects) ? d.subjects.slice(0, 8) : [];
+    // Keep this compact (token-efficient) to speed up the AI response.
+    return (docs || []).map((d, idx) => {
+      const committee = firstCommittee(d.committees);
       return {
         rank: idx + 1,
         id: d.id,
@@ -171,11 +203,11 @@
         title: d.title || "",
         chamber: d.chamber || "",
         congress: d.congress || "",
+        status: d.status ? titleCaseFromToken(d.status) : "",
         updated: d.update_date ? epochToDate(d.update_date) : "",
-        latest_action: d.latest_action_text || "",
         policy_area: d.policy_area || "",
-        committees,
-        subjects,
+        committee: committee || "",
+        latest_action: d.latest_action_text || "",
         ai_summary: d.ai_summary_text || ""
       };
     });
@@ -214,39 +246,6 @@
 
     if (inList) out.push("</ul>");
     return out.join("");
-  }
-
-  function titleCaseFromToken(s) {
-    const t = String(s || "").replace(/_/g, " ").trim();
-    if (!t) return "";
-    return t.split(/\s+/).map(w => w.slice(0, 1).toUpperCase() + w.slice(1)).join(" ");
-  }
-
-  function sortStatusOptions(options) {
-    const order = [
-      "Introduced",
-      "CommitteeConsideration",
-      "FloorConsideration",
-      "FailedOneChamber",
-      "PassedOneChamber",
-      "PassedBothChambers",
-      "ResolvingDifferences",
-      "ToPresident",
-      "VetoActions",
-      "BecameLaw"
-    ];
-
-    const norm = (v) => String(v || "").replace(/\s+/g, "").toLowerCase();
-    const orderMap = new Map(order.map((v, i) => [norm(v), i]));
-
-    return (options || [])
-      .slice()
-      .sort((a, b) => {
-        const ai = orderMap.has(norm(a.value)) ? orderMap.get(norm(a.value)) : 999;
-        const bi = orderMap.has(norm(b.value)) ? orderMap.get(norm(b.value)) : 999;
-        if (ai !== bi) return ai - bi;
-        return String(a.label || a.value).localeCompare(String(b.label || b.value));
-      });
   }
 
   /* ---------------- Filter State ---------------- */
@@ -358,8 +357,6 @@
       }
 
       updateBadge(key);
-      // Run search only if we’ve already run at least one search OR user has a query in box
-      // (This preserves old behavior but makes filters feel responsive.)
       triggerSearchFromUI();
     });
 
@@ -510,7 +507,7 @@
         ? filterState.sponsor_party
         : filterState[key];
 
-    const count = "";
+    const count = set instanceof Set ? set.size : 0;
     if (!count) {
       badge.textContent = "";
       badge.classList.remove("is-on");
@@ -528,11 +525,9 @@
   function triggerSearchFromUI() {
     const input = document.getElementById("mainSearchInput");
     const q = input ? String(input.value || "") : "";
-    // If results section has ever been shown, keep it reactive
     const resultsSection = document.getElementById("resultsSection");
     const hasShownResults = resultsSection && !resultsSection.hasAttribute("hidden");
     if (hasShownResults || q.trim()) {
-      // Run search with current query + filters
       runSearch(q).catch(err => console.error(err));
     }
   }
@@ -570,7 +565,6 @@
   /* ---------------- Recent bills ---------------- */
 
   async function fetchRecentBills(limit) {
-    // browsing recent bills: query "*" sorted by update_date
     const json = await tsGet(TS_DOCS_SEARCH, {
       q: "*",
       query_by: "title",
@@ -598,7 +592,6 @@
   /* ---------------- Facets preload ---------------- */
 
   async function preloadFacets() {
-    // per_page=0 gives facets only
     const facetBy = [
       "chamber",
       "committees",
@@ -618,7 +611,6 @@
 
     const getFacet = (field) => facets.find(f => f.field_name === field);
 
-    // Chamber
     const chamberFacet = getFacet("chamber");
     facetOptions.chamber = (chamberFacet?.counts || []).map(c => ({
       value: c.value,
@@ -626,25 +618,21 @@
       count: c.count
     }));
 
-    // Committees
     const comFacet = getFacet("committees");
     facetOptions.committees = (comFacet?.counts || [])
       .slice(0, MAX_COMMITTEES)
       .map(c => ({ value: c.value, label: c.value, count: c.count }));
 
-    // Policy area
     const polFacet = getFacet("policy_area");
     facetOptions.policy_area = (polFacet?.counts || [])
       .slice(0, MAX_POLICY)
       .map(c => ({ value: c.value, label: c.value, count: c.count }));
 
-    // Status
     const statFacet = getFacet("status");
     facetOptions.status = sortStatusOptions((statFacet?.counts || [])
       .slice(0, MAX_STATUS)
       .map(c => ({ value: c.value, label: titleCaseFromToken(c.value), count: c.count })));
 
-    // Render options into UI if present
     renderDropdownOptions("chamber");
     renderDropdownOptions("committees");
     renderDropdownOptions("policy_area");
@@ -689,45 +677,52 @@
   /* ---------------- OpenAI: answer generation ---------------- */
 
   async function generateAnswer({ userQuestion, primaryQuery, sources }) {
-    const question = String(userQuestion || "").trim();
-    const pq = String(primaryQuery || "").trim();
+    const systemStyle = [
+      "You are a helpful legislative search assistant.",
+      "Answer in plain English.",
+      "Be concise and practical.",
+      "Do not invent facts not supported by the provided sources.",
+      "If the question cannot be answered from the sources, say what’s missing and suggest a better query.",
+      "Formatting rules: do NOT use headings (no # / ## / ###), do NOT use numbered lists.",
+      "Use '-' bullets only when listing bills.",
+      "When listing bills, use exactly one bullet per bill in this format:",
+      "**BILL TITLE (BILL CODE):** One sentence summarizing what it does and the latest action.",
+      "Do not break a bill into sub-bullets like Chamber/Summary/Latest Action."
+    ].join(" ");
 
-    const payload = {
-      model: ANSWER_MODEL,
-      input: [
-        {
-          role: "system",
-          content: [
-            {
-              type: "input_text",
-              text:
-                "You are helping a user understand U.S. Congress bills. " +
-                "Use ONLY the provided sources. " +
-                "Be concise, plain-English, and structured with short bullets when helpful. " +
-                "If the sources don't contain enough info, say what is missing."
-            }
-          ]
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text:
-                `User query: ${pq || question}\n\n` +
-                `Question: ${question || pq}\n\n` +
-                `Sources (JSON):\n${JSON.stringify(sources || [], null, 2)}`
-            }
-          ]
-        }
-      ],
-      temperature: 0.2
-    };
+    const prompt = [
+      `SEARCH QUERY: ${primaryQuery}`,
+      userQuestion && userQuestion !== primaryQuery ? `FOLLOW-UP QUESTION: ${userQuestion}` : "",
+      "",
+      "SOURCES (ranked search hits, limited fields):",
+      JSON.stringify(sources, null, 2),
+      "",
+      "TASK:",
+      "1) Start with 2–4 sentences summarizing the main themes across these bills (include party trends only if the sources support it).",
+      "2) Then list 4–10 key bills as '-' bullets. One bullet per bill only, following the required format.",
+      "Do NOT include headings, numbered items, or any '###' markers.",
+      "Do NOT add a Sources/Source bills line. The UI shows clickable source links separately.",
+      "",
+      "Return plain text with minimal markdown: bold is OK; no tables."
+    ].filter(Boolean).join("\n");
 
     const res = await fetch(OA_RESPONSES_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        model: ANSWER_MODEL,
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: systemStyle }]
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: prompt }]
+          }
+        ],
+        temperature: 0.2
+      })
     });
 
     if (!res.ok) {
@@ -737,7 +732,6 @@
 
     const json = await res.json();
 
-    // Responses API returns output array; safest: concatenate text parts
     const out = json?.output || [];
     let text = "";
 
@@ -854,16 +848,58 @@
     `;
   }
 
+  function ensureSpinnerStyles() {
+    if (document.getElementById("aiSpinnerStyles")) return;
+
+    const style = document.createElement("style");
+    style.id = "aiSpinnerStyles";
+    style.textContent = `
+      .ai-spinner-row { display:flex; align-items:center; gap:10px; }
+      .ai-spinner {
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: 2px solid rgba(107,114,128,0.35);
+        border-top-color: rgba(26,115,232,0.95);
+        animation: aiSpin 0.8s linear infinite;
+        flex: 0 0 auto;
+      }
+      @keyframes aiSpin { to { transform: rotate(360deg); } }
+    `;
+    document.head.appendChild(style);
+  }
+
   function renderAnswerLoading(message) {
     ensureAnswerUI();
+    ensureSpinnerStyles();
 
     const body = document.getElementById("aiAnswerBody");
     if (body) {
-      body.innerHTML = `<div class="muted">${escHtml(message || "Generating answer…")}</div>`;
+      body.innerHTML = `
+        <div class="ai-spinner-row">
+          <span class="ai-spinner" aria-hidden="true"></span>
+          <span class="muted">${escHtml(message || "Generating answer…")}</span>
+        </div>
+      `;
     }
 
     const links = document.getElementById("aiSourcesLinks");
     if (links) links.innerHTML = "";
+  }
+
+  function normalizeAnswerText(answerText) {
+    let t = String(answerText || "");
+
+    // Strip markdown heading markers if the model emits them anyway.
+    t = t.replace(/^\s*#{1,6}\s+/gm, "");
+
+    // Convert numbered list items ("1. Foo") to dash bullets ("- Foo")
+    t = t.replace(/^\s*\d+\.\s+/gm, "- ");
+
+    // If the model emits "-Chamber:" without a space, normalize spacing (harmless)
+    t = t.replace(/^\s*-([A-Za-z])/gm, "- $1");
+
+    return t.trim();
   }
 
   function renderAnswerText(answerText, sourceDocs) {
@@ -873,9 +909,9 @@
 
     if (body) {
       if (window.simpleMarkdownToHTML) {
-        body.innerHTML = window.simpleMarkdownToHTML(answerText);
+        body.innerHTML = window.simpleMarkdownToHTML(normalizeAnswerText(answerText));
       } else {
-        body.innerHTML = parseTextToHtml(answerText);
+        body.innerHTML = parseTextToHtml(normalizeAnswerText(answerText));
       }
     }
 
@@ -1064,9 +1100,6 @@
   async function runSearch(q) {
     const raw = String(q || "").trim();
 
-    // Behavior:
-    // - If user typed nothing but filters are set, allow browse search with q="*"
-    // - If truly nothing, do nothing (matches old behavior)
     const hasAnyFilters =
       filterState.chamber.size ||
       filterState.committees.size ||
@@ -1087,16 +1120,13 @@
 
     renderAnswerLoading("Searching and generating summary…");
 
-    // Build filter_by
     const filterBy = buildFilterBy();
 
-    // 1) embed query (ONLY if not browsing)
     let vector = null;
     if (query !== "*") {
       vector = await embedQuery(query);
     }
 
-    // 2) hybrid search
     const result = await hybridSearchMulti({
       q: query,
       vector: vector || [],
@@ -1106,14 +1136,11 @@
       filterBy: filterBy
     });
 
-    // 3) render results
     renderResults(result, query);
 
-    // 4) answer (only when user typed a real query)
     const hits = result?.hits || [];
     if (query === "*") {
       renderAnswerError("Tip: Type a keyword query to generate an AI summary. Browsing mode does not generate summaries.");
-      // Still set state so refresh/follow-up works after a real search
       state.lastPrimaryQuery = "";
       state.lastHits = hits;
       state.lastSourceDocs = pickTopDocsForAnswer(hits, ANSWER_SOURCES_LIMIT);
@@ -1128,15 +1155,12 @@
   async function boot() {
     const $ = await waitForjQuery();
 
-    // Filters UI (safe even if #filtersMount missing)
     ensureFiltersUI();
 
-    // preload facets (safe failure)
     try {
       await preloadFacets();
     } catch (e) {
       console.warn("Facet preload failed:", e);
-      // leave dropdowns with “No options yet.” but keep everything else working
       renderDropdownOptions("chamber");
       renderDropdownOptions("committees");
       renderDropdownOptions("policy_area");
@@ -1146,7 +1170,6 @@
       updateAllBadges();
     }
 
-    // recent bills
     try {
       const recent = await fetchRecentBills(RECENT_LIMIT);
       renderRecentBills(recent);
@@ -1156,10 +1179,8 @@
       if ($mount.length) $mount.html(`<div class="muted">Could not load recent bills.</div>`);
     }
 
-    // ensure AI UI exists (even before first search)
     ensureAnswerUI();
 
-    // bind search
     const $form = $("#mainSearchForm");
     const $input = $("#mainSearchInput");
 
@@ -1177,7 +1198,6 @@
       });
     }
 
-    // bind refresh + follow-up handlers (delegated)
     document.addEventListener("click", async function (ev) {
       const t = ev.target;
       if (!(t instanceof Element)) return;
@@ -1220,7 +1240,6 @@
       }
     });
 
-    // auto-run ?q=
     const qParam = getParam("q");
     if (qParam && $input.length) {
       $input.val(qParam);
