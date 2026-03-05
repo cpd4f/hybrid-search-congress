@@ -1,28 +1,256 @@
 /* ---------------------------------------------------
-   ai-search.js
-   Hybrid search (Typesense keyword + vector) + AI answer
+   AI SEARCH (Typesense hybrid vector search via Workers)
+   - Recent bills: GET /collections/:collection/documents/search (small query)
+   - Facet preload: GET /collections/:collection/documents/search (per_page=0 + facet_by)
+   - Search: POST /multi_search (vector payload in body + filter_by)
+   - OpenAI:
+       - embeddings: POST /embeddings
+       - answer: POST /responses
+   - Retains AI Answer panel + follow-up + refresh summary
+   - Adds Filters:
+       Chamber, Committee, Policy area, Sponsor party (AP style labels),
+       Status, Updated range
 --------------------------------------------------- */
 
 (function () {
   "use strict";
 
-  /* ---------------------------------------------------
-     STATE
-  --------------------------------------------------- */
+  // Workers (retain your working hardcoded values)
+  const TYPESENSE_WORKER_BASE = "https://typesense-proxy-worker.colemandavis4.workers.dev";
+  const OPENAI_WORKER_BASE = "https://openai-proxy-worker.colemandavis4.workers.dev";
 
-  const state = {
-    lastPrimaryQuery: "",
-    lastHits: [],
-    lastAnswerQuestion: "",
-    lastAnswerSources: [],
-    lastAnswerText: "",
-    isSearching: false,
-    isAnswerLoading: false,
-    page: 1,
-    perPage: (window.APP_CONFIG && window.APP_CONFIG.RESULTS_PER_PAGE) ? window.APP_CONFIG.RESULTS_PER_PAGE : 20
-  };
+  // Collection
+  const COLLECTION =
+    (window.APP_CONFIG && window.APP_CONFIG.TYPESENSE_INDEX) ||
+    "congress_bills";
 
-  // Filters (Sets + single-select)
+  // Models / tuning
+  const EMBED_MODEL =
+    (window.APP_CONFIG && window.APP_CONFIG.OPENAI_EMBED_MODEL) ||
+    "text-embedding-3-large";
+
+  const ANSWER_MODEL =
+    (window.APP_CONFIG && window.APP_CONFIG.OPENAI_ANSWER_MODEL) ||
+    "gpt-4o-mini";
+
+  const EXPECTED_EMBED_DIMS = 3072;
+
+  const RECENT_LIMIT =
+    (window.APP_CONFIG && window.APP_CONFIG.RECENT_BILLS_LIMIT) ||
+    12;
+
+  const RESULTS_PER_PAGE =
+    (window.APP_CONFIG && window.APP_CONFIG.RESULTS_PER_PAGE) ||
+    20;
+
+  const DEFAULT_ALPHA =
+    (window.APP_CONFIG && window.APP_CONFIG.HYBRID_ALPHA) ||
+    0.65;
+
+  const ANSWER_SOURCES_LIMIT =
+    (window.APP_CONFIG && window.APP_CONFIG.ANSWER_SOURCES_LIMIT) ||
+    8;
+
+  // Filter facet caps
+  const MAX_FACET_VALUES = 250; // committees can be long
+  const MAX_COMMITTEES = 250;
+  const MAX_POLICY = 120;
+  const MAX_STATUS = 80;
+  const SHOW_FILTER_COUNTS = false; // set true if you later implement dynamic counts per query
+
+  // Endpoints (retain your working routes)
+  const TS_DOCS_SEARCH =
+    `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
+
+  const TS_MULTI_SEARCH =
+    `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/multi_search`;
+
+  const OA_EMBED_URL =
+    `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/embeddings`;
+
+  const OA_RESPONSES_URL =
+    `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/responses`;
+
+  /* ---------------- helpers ---------------- */
+
+  function waitForjQuery(timeoutMs = 8000) {
+    const start = Date.now();
+    return new Promise((resolve, reject) => {
+      (function tick() {
+        if (window.jQuery) return resolve(window.jQuery);
+        if (Date.now() - start > timeoutMs) return reject(new Error("jQuery failed to load"));
+        setTimeout(tick, 30);
+      })();
+    });
+  }
+
+  function escHtml(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  // For Typesense filter_by string values: always quote + escape
+  function escFilterVal(v) {
+    const s = String(v ?? "");
+    return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+
+  function epochToDate(epochSeconds) {
+    if (!epochSeconds) return "";
+    const d = new Date(epochSeconds * 1000);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  }
+
+  function epochSecondsDaysAgo(days) {
+    const ms = Date.now() - days * 24 * 60 * 60 * 1000;
+    return Math.floor(ms / 1000);
+  }
+
+  function sponsorDotClass(party) {
+    const p = String(party || "").toUpperCase();
+    if (p === "R") return "party-dot party-dot--r";
+    if (p === "D") return "party-dot party-dot--d";
+    if (p === "I") return "party-dot party-dot--i";
+    return "party-dot party-dot--u";
+  }
+
+  function sponsorPartyLabel(party) {
+    const p = String(party || "").toUpperCase();
+    if (p === "R") return "Republican";
+    if (p === "D") return "Democratic";
+    if (p === "I") return "Independent";
+    return party ? String(party) : "Unknown";
+  }
+
+  function firstCommittee(committees) {
+    if (!Array.isArray(committees) || !committees.length) return "";
+    return String(committees[0] || "");
+  }
+
+  function billShortId(doc) {
+    const t = String(doc?.type || "").toUpperCase();
+    const n = String(doc?.number || "");
+    if (!t || !n) return "";
+    return `${t} ${n}`;
+  }
+
+  function getParam(name) {
+    const u = new URL(window.location.href);
+    return u.searchParams.get(name);
+  }
+
+  function showResultsSection() {
+    const section = document.getElementById("resultsSection");
+    if (section && section.hasAttribute("hidden")) section.removeAttribute("hidden");
+  }
+
+  function setResultsCount(n) {
+    const el = document.getElementById("resultsCount");
+    if (el) el.textContent = String(n ?? 0);
+  }
+
+  function pickTopDocsForAnswer(hits, limit) {
+    const docs = (hits || []).map(h => h.document).filter(Boolean);
+    return docs.slice(0, Math.max(1, limit || 1));
+  }
+
+  function buildSourcesBundle(docs) {
+    // Keep this compact (token-efficient)
+    return docs.map((d, idx) => {
+      const committees = Array.isArray(d.committees) ? d.committees.slice(0, 3) : [];
+      const subjects = Array.isArray(d.subjects) ? d.subjects.slice(0, 8) : [];
+      return {
+        rank: idx + 1,
+        id: d.id,
+        bill: billShortId(d),
+        title: d.title || "",
+        chamber: d.chamber || "",
+        congress: d.congress || "",
+        updated: d.update_date ? epochToDate(d.update_date) : "",
+        latest_action: d.latest_action_text || "",
+        policy_area: d.policy_area || "",
+        committees,
+        subjects,
+        ai_summary: d.ai_summary_text || ""
+      };
+    });
+  }
+
+  function parseTextToHtml(text) {
+    // Safe-ish rendering: escape then do minimal formatting.
+    const raw = String(text || "");
+    const escaped = escHtml(raw);
+
+    // Convert simple bullet lines to <ul>
+    const lines = escaped.split(/\r?\n/);
+    const out = [];
+    let inList = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const isBullet = trimmed.startsWith("- ") || trimmed.startsWith("• ");
+
+      if (isBullet) {
+        if (!inList) {
+          out.push("<ul style=\"margin:10px 0 0 18px; padding:0;\">");
+          inList = true;
+        }
+        out.push(`<li style="margin:6px 0; color: var(--color-text);">${trimmed.replace(/^(- |• )/, "")}</li>`);
+      } else {
+        if (inList) {
+          out.push("</ul>");
+          inList = false;
+        }
+        if (trimmed.length) {
+          out.push(`<p style="margin:10px 0; color: var(--color-text); line-height:1.5;">${line}</p>`);
+        }
+      }
+    }
+
+    if (inList) out.push("</ul>");
+    return out.join("");
+  }
+
+  function titleCaseFromToken(s) {
+    const t = String(s || "").replace(/_/g, " ").trim();
+    if (!t) return "";
+    return t.split(/\s+/).map(w => w.slice(0, 1).toUpperCase() + w.slice(1)).join(" ");
+  }
+
+  function sortStatusOptions(options) {
+    const order = [
+      "Introduced",
+      "CommitteeConsideration",
+      "FloorConsideration",
+      "FailedOneChamber",
+      "PassedOneChamber",
+      "PassedBothChambers",
+      "ResolvingDifferences",
+      "ToPresident",
+      "VetoActions",
+      "BecameLaw"
+    ];
+
+    const norm = (v) => String(v || "").replace(/\s+/g, "").toLowerCase();
+    const orderMap = new Map(order.map((v, i) => [norm(v), i]));
+
+    return (options || [])
+      .slice()
+      .sort((a, b) => {
+        const ai = orderMap.has(norm(a.value)) ? orderMap.get(norm(a.value)) : 999;
+        const bi = orderMap.has(norm(b.value)) ? orderMap.get(norm(b.value)) : 999;
+        if (ai !== bi) return ai - bi;
+        return String(a.label || a.value).localeCompare(String(b.label || b.value));
+      });
+  }
+
+  /* ---------------- Filter State ---------------- */
+
   const filterState = {
     chamber: new Set(),
     committees: new Set(),
@@ -43,119 +271,125 @@
     ],
     status: [],
     update_range: [
-      { value: "7d", label: "Past 7 days", count: 0 },
-      { value: "30d", label: "Past 30 days", count: 0 },
-      { value: "90d", label: "Past 90 days", count: 0 },
-      { value: "365d", label: "Past year", count: 0 },
-      { value: "all", label: "All time", count: 0 }
+      { value: "7d", label: "Past 7 days" },
+      { value: "30d", label: "Past 30 days" },
+      { value: "90d", label: "Past 90 days" },
+      { value: "365d", label: "Past year" },
+      { value: "all", label: "All time" }
     ]
   };
 
-  // Recent bills
-  let recentBillsCache = [];
+  function buildFilterBy() {
+    const parts = [];
 
-  /* ---------------------------------------------------
-     CONFIG / ENDPOINTS
-  --------------------------------------------------- */
+    const chambers = Array.from(filterState.chamber);
+    if (chambers.length) parts.push(`chamber:=[${chambers.map(escFilterVal).join(",")}]`);
 
-  const TYPESENSE_INDEX = (window.APP_CONFIG && window.APP_CONFIG.TYPESENSE_INDEX) ? window.APP_CONFIG.TYPESENSE_INDEX : "congress_bills";
+    const committees = Array.from(filterState.committees);
+    if (committees.length) parts.push(`committees:=[${committees.map(escFilterVal).join(",")}]`);
 
-  const API = window.API || {
-    TYPESENSE: "",
-    OPENAI: ""
-  };
+    const policy = Array.from(filterState.policy_area);
+    if (policy.length) parts.push(`policy_area:=[${policy.map(escFilterVal).join(",")}]`);
 
-  /* ---------------------------------------------------
-     HELPERS
-  --------------------------------------------------- */
+    const party = Array.from(filterState.sponsor_party);
+    if (party.length) parts.push(`sponsor_party:=[${party.map(escFilterVal).join(",")}]`);
 
-  function escHtml(str) {
-    return String(str || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
+    const status = Array.from(filterState.status);
+    if (status.length) parts.push(`status:=[${status.map(escFilterVal).join(",")}]`);
 
-  function epochToDate(epochSeconds) {
-    if (!epochSeconds) return "";
-    const d = new Date(epochSeconds * 1000);
-    if (isNaN(d.getTime())) return "";
-    return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-  }
-
-  function epochSecondsDaysAgo(days) {
-    const ms = Date.now() - (days * 24 * 60 * 60 * 1000);
-    return Math.floor(ms / 1000);
-  }
-
-  function billShortId(doc) {
-    const bn = doc.bill_number || "";
-    const bt = doc.bill_type || "";
-    const cg = doc.congress || "";
-    const raw = `${bt}${bn}-${cg}`;
-    return raw.replace(/\s+/g, "").toLowerCase();
-  }
-
-  function sponsorPartyLabel(p) {
-    if (p === "R") return "R";
-    if (p === "D") return "D";
-    if (p === "I") return "I";
-    return "";
-  }
-
-  function sponsorDotClass(p) {
-    if (p === "R") return "dot dot--r";
-    if (p === "D") return "dot dot--d";
-    if (p === "I") return "dot dot--i";
-    return "dot";
-  }
-
-  function firstCommittee(doc) {
-    const c = doc.committees;
-    if (!c) return "";
-    if (Array.isArray(c) && c.length) return String(c[0]);
-    if (typeof c === "string") return c;
-    return "";
-  }
-
-  function titleCaseFromToken(t) {
-    const s = String(t || "").trim();
-    if (!s) return "";
-    return s.charAt(0).toUpperCase() + s.slice(1);
-  }
-
-  function getParam(name) {
-    if (window.utils && typeof window.utils.getParam === "function") return window.utils.getParam(name);
-    const url = new URL(window.location.href);
-    return url.searchParams.get(name);
-  }
-
-  function parseTextToHtml(text) {
-    // Prefer markdown helper if present
-    if (window.markdownToHTML && typeof window.markdownToHTML === "function") {
-      return window.markdownToHTML(String(text || ""));
+    // update range (single)
+    const r = String(filterState.update_range || "all");
+    if (r !== "all") {
+      if (r === "7d") parts.push(`update_date:>=${epochSecondsDaysAgo(7)}`);
+      if (r === "30d") parts.push(`update_date:>=${epochSecondsDaysAgo(30)}`);
+      if (r === "90d") parts.push(`update_date:>=${epochSecondsDaysAgo(90)}`);
+      if (r === "365d") parts.push(`update_date:>=${epochSecondsDaysAgo(365)}`);
     }
-    // Minimal fallback
-    return escHtml(String(text || "")).replace(/\n/g, "<br>");
+
+    return parts.join(" && ");
   }
 
-  function waitForjQuery(timeoutMs) {
-    timeoutMs = timeoutMs || 5000;
-    const start = Date.now();
-    return new Promise((resolve) => {
-      (function tick() {
-        if (window.jQuery) return resolve(true);
-        if (Date.now() - start > timeoutMs) return resolve(false);
-        setTimeout(tick, 50);
-      })();
+  /* ---------------- Filter UI (accordion multi-check) ---------------- */
+
+  function ensureFiltersUI() {
+    const mount = document.getElementById("filtersMount");
+    if (!mount) return;
+
+    if (mount.getAttribute("data-filters-built") === "1") return;
+    mount.setAttribute("data-filters-built", "1");
+
+    mount.innerHTML = `
+      <div class="filters">
+        <div class="filter-acc" id="filtersAccordion">
+          ${renderAccordionItem("chamber", "Chamber")}
+          ${renderAccordionItem("committees", "Committee")}
+          ${renderAccordionItem("policy_area", "Policy area")}
+          ${renderAccordionItem("sponsor_party", "Sponsor party")}
+          ${renderAccordionItem("status", "Status")}
+          ${renderAccordionItem("update_range", "Updated")}
+        </div>
+
+        <div class="filters__actions">
+          <button type="button" class="filters__clear" id="clearFiltersBtn">Clear filters</button>
+        </div>
+      </div>
+    `;
+
+    // Change events (checkbox/radio)
+    mount.addEventListener("change", function (ev) {
+      const inp = ev.target;
+      if (!(inp instanceof HTMLInputElement)) return;
+
+      const key = inp.getAttribute("data-filter-key");
+      if (!key) return;
+
+      const val = inp.value;
+
+      if (key === "update_range") {
+        filterState.update_range = val || "all";
+        // keep radios synced visually
+        syncDropdown("update_range");
+      } else {
+        const set = filterState[key];
+        if (set && set instanceof Set) {
+          if (inp.checked) set.add(val);
+          else set.delete(val);
+        }
+      }
+
+      updateBadge(key);
+      // Run search only if we’ve already run at least one search OR user has a query in box
+      // (This preserves old behavior but makes filters feel responsive.)
+      triggerSearchFromUI();
     });
-  }
 
-  /* ---------------------------------------------------
-     FILTER UI
-  --------------------------------------------------- */
+    // Clear
+    const clearBtn = document.getElementById("clearFiltersBtn");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", function () {
+        filterState.chamber.clear();
+        filterState.committees.clear();
+        filterState.policy_area.clear();
+        filterState.sponsor_party.clear();
+        filterState.status.clear();
+        filterState.update_range = "all";
+
+        syncAllDropdowns();
+        updateAllBadges();
+        triggerSearchFromUI();
+      });
+    }
+
+    // Initial render (options may be empty until facet preload)
+    renderDropdownOptions("chamber");
+    renderDropdownOptions("committees");
+    renderDropdownOptions("policy_area");
+    renderDropdownOptions("sponsor_party");
+    renderDropdownOptions("status");
+    renderDropdownOptions("update_range");
+
+    updateAllBadges();
+  }
 
   function renderAccordionItem(key, label) {
     return `
@@ -174,47 +408,13 @@
     `;
   }
 
-  function ensureFiltersUI() {
-    const mount = document.getElementById("filtersMount");
-    if (!mount) return;
-
-    // Avoid rebuilding / rebinding
-    if (mount.getAttribute("data-filters-built") === "1") return;
-    mount.setAttribute("data-filters-built", "1");
-
-    // IMPORTANT: HTML ONLY. Do not place JS in this template string.
-    mount.innerHTML = `
-      <div class="filters" data-filters-ui="1">
-        <div class="filter-acc" id="filtersAccordion">
-          ${renderAccordionItem("chamber", "Chamber")}
-          ${renderAccordionItem("committees", "Committee")}
-          ${renderAccordionItem("policy_area", "Policy area")}
-          ${renderAccordionItem("sponsor_party", "Sponsor party")}
-          ${renderAccordionItem("status", "Status")}
-          ${renderAccordionItem("update_range", "Updated")}
-        </div>
-
-        <div class="filters__actions">
-          <button type="button" class="filters__clear" id="clearFiltersBtn">Clear filters</button>
-        </div>
-      </div>
-    `;
-
-    // Bind accordion animation (safe: no DOM injection)
-    if (typeof bindFiltersAccordion === "function") {
-      bindFiltersAccordion(mount);
-    } else if (window.__bindFiltersAccordion) {
-      window.__bindFiltersAccordion(mount);
-    }
-  }
-
   function renderDropdownOptions(key) {
     const body = document.querySelector(`[data-options="${CSS.escape(key)}"]`);
     if (!body) return;
 
     const options = facetOptions[key] || [];
 
-    // Updated range is radios
+    // Update range is always available
     if (key === "update_range") {
       body.innerHTML = options.map((o, idx) => {
         const id = `f-${key}-${idx}`;
@@ -224,56 +424,93 @@
             <input
               id="${escHtml(id)}"
               type="radio"
-              name="update_range"
+              name="f-${escHtml(key)}"
+              data-filter-key="${escHtml(key)}"
               value="${escHtml(o.value)}"
               ${checked ? "checked" : ""}
             />
-            <span class="filter-opt__label">${escHtml(o.label)}</span>
+            <span class="filter-opt__text">${escHtml(o.label)}</span>
           </label>
         `;
       }).join("");
+      updateBadge(key);
       return;
     }
 
-    // Sets are checkboxes
+    if (!options.length) {
+      body.innerHTML = `<div class="muted">No options yet.</div>`;
+      updateBadge(key);
+      return;
+    }
+
     body.innerHTML = options.map((o, idx) => {
       const id = `f-${key}-${idx}`;
-      const checked = filterState[key] && filterState[key].has(o.value);
+      const checked =
+        key === "sponsor_party"
+          ? filterState.sponsor_party.has(String(o.value))
+          : (filterState[key] && filterState[key].has(String(o.value)));
+
+      const label = o.label || o.value;
+      const count = "";
+
       return `
         <label class="filter-opt" for="${escHtml(id)}">
           <input
             id="${escHtml(id)}"
             type="checkbox"
-            value="${escHtml(o.value)}"
+            data-filter-key="${escHtml(key)}"
+            value="${escHtml(String(o.value))}"
             ${checked ? "checked" : ""}
           />
-          <span class="filter-opt__label">${escHtml(o.label)}</span>
-          ${typeof o.count === "number" ? `<span class="filter-opt__count">${o.count}</span>` : ""}
+          <span class="filter-opt__text">${escHtml(label)}${count}</span>
         </label>
       `;
     }).join("");
+
+    updateBadge(key);
+  }
+
+  function syncDropdown(key) {
+    const body = document.querySelector(`[data-options="${CSS.escape(key)}"]`);
+    if (!body) return;
+
+    const inputs = body.querySelectorAll(`input[data-filter-key="${CSS.escape(key)}"]`);
+    inputs.forEach(inp => {
+      const v = inp.value;
+      if (key === "update_range") {
+        inp.checked = (filterState.update_range === v);
+      } else if (key === "sponsor_party") {
+        inp.checked = filterState.sponsor_party.has(v);
+      } else {
+        const set = filterState[key];
+        inp.checked = set && set.has(v);
+      }
+    });
+
+    updateBadge(key);
+  }
+
+  function syncAllDropdowns() {
+    ["chamber", "committees", "policy_area", "sponsor_party", "status", "update_range"].forEach(syncDropdown);
   }
 
   function updateBadge(key) {
     const badge = document.querySelector(`[data-badge="${CSS.escape(key)}"]`);
     if (!badge) return;
 
-    // Updated range is single-select
     if (key === "update_range") {
-      if (filterState.update_range && filterState.update_range !== "all") {
-        const opt = facetOptions.update_range.find(x => x.value === filterState.update_range);
-        badge.textContent = opt ? opt.label : "Filtered";
-        badge.classList.add("is-on");
-      } else {
-        badge.textContent = "";
-        badge.classList.remove("is-on");
-      }
+      const opt = facetOptions.update_range.find(x => x.value === filterState.update_range);
+      badge.textContent = opt ? opt.label : "All time";
+      badge.classList.add("is-on");
       return;
     }
 
-    const set = filterState[key];
-    const count = set && typeof set.size === "number" ? set.size : 0;
+    const set =
+      key === "sponsor_party"
+        ? filterState.sponsor_party
+        : filterState[key];
 
+    const count = "";
     if (!count) {
       badge.textContent = "";
       badge.classList.remove("is-on");
@@ -288,281 +525,294 @@
     ["chamber", "committees", "policy_area", "sponsor_party", "status", "update_range"].forEach(updateBadge);
   }
 
-  function clearAllFilters() {
-    filterState.chamber.clear();
-    filterState.committees.clear();
-    filterState.policy_area.clear();
-    filterState.sponsor_party.clear();
-    filterState.status.clear();
-    filterState.update_range = "all";
-
-    // Sync UI
-    ["chamber", "committees", "policy_area", "sponsor_party", "status", "update_range"].forEach(renderDropdownOptions);
-    updateAllBadges();
-
-    // Run search if we have a query
-    triggerSearchFromUI();
-  }
-
   function triggerSearchFromUI() {
-    const input = document.getElementById("q");
-    const q = input ? String(input.value || "").trim() : "";
-    state.page = 1;
-    runSearch(q);
+    const input = document.getElementById("mainSearchInput");
+    const q = input ? String(input.value || "") : "";
+    // If results section has ever been shown, keep it reactive
+    const resultsSection = document.getElementById("resultsSection");
+    const hasShownResults = resultsSection && !resultsSection.hasAttribute("hidden");
+    if (hasShownResults || q.trim()) {
+      // Run search with current query + filters
+      runSearch(q).catch(err => console.error(err));
+    }
   }
 
-  /* ---------------------------------------------------
-     FILTER BY (Typesense)
-  --------------------------------------------------- */
+  /* ---------------- Typesense fetch helpers ---------------- */
 
-  function escFilterVal(v) {
-    // Typesense filter_by needs quotes for strings if special chars
-    const s = String(v || "");
-    const safe = s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    return `"${safe}"`;
+  async function tsGet(url, paramsObj) {
+    const u = new URL(url);
+    if (paramsObj) {
+      Object.keys(paramsObj).forEach(k => {
+        if (paramsObj[k] !== undefined && paramsObj[k] !== null) u.searchParams.set(k, String(paramsObj[k]));
+      });
+    }
+    const res = await fetch(u.toString(), { method: "GET" });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "(no body)");
+      throw new Error(`Typesense GET failed HTTP ${res.status}: ${txt}`);
+    }
+    return res.json();
   }
 
-  function buildFilterBy() {
-    const parts = [];
-
-    if (filterState.chamber.size) {
-      parts.push(`chamber:=[${Array.from(filterState.chamber).map(escFilterVal).join(",")}]`);
-    }
-    if (filterState.committees.size) {
-      parts.push(`committees:=[${Array.from(filterState.committees).map(escFilterVal).join(",")}]`);
-    }
-    if (filterState.policy_area.size) {
-      parts.push(`policy_area:=[${Array.from(filterState.policy_area).map(escFilterVal).join(",")}]`);
-    }
-    if (filterState.sponsor_party.size) {
-      parts.push(`sponsor_party:=[${Array.from(filterState.sponsor_party).map(escFilterVal).join(",")}]`);
-    }
-    if (filterState.status.size) {
-      parts.push(`status:=[${Array.from(filterState.status).map(escFilterVal).join(",")}]`);
-    }
-
-    // update range -> epoch seconds threshold
-    if (filterState.update_range && filterState.update_range !== "all") {
-      let days = 0;
-      if (filterState.update_range === "7d") days = 7;
-      if (filterState.update_range === "30d") days = 30;
-      if (filterState.update_range === "90d") days = 90;
-      if (filterState.update_range === "365d") days = 365;
-      if (days) {
-        const threshold = epochSecondsDaysAgo(days);
-        parts.push(`update_date:>=${threshold}`);
-      }
-    }
-
-    return parts.join(" && ");
-  }
-
-  /* ---------------------------------------------------
-     TYPESENSE SEARCH
-  --------------------------------------------------- */
-
-  async function embedQuery(q) {
-    // Proxy worker handles OpenAI key
-    const res = await fetch(API.OPENAI, {
+  async function tsPost(url, body) {
+    const res = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "(no body)");
+      throw new Error(`Typesense POST failed HTTP ${res.status}: ${txt}`);
+    }
+    return res.json();
+  }
+
+  /* ---------------- Recent bills ---------------- */
+
+  async function fetchRecentBills(limit) {
+    // browsing recent bills: query "*" sorted by update_date
+    const json = await tsGet(TS_DOCS_SEARCH, {
+      q: "*",
+      query_by: "title",
+      per_page: limit || 12,
+      page: 1,
+      sort_by: "update_date:desc",
+      include_fields: [
+        "id",
+        "title",
+        "type",
+        "number",
+        "congress",
+        "chamber",
+        "update_date",
+        "committees",
+        "sponsor_party",
+        "status"
+      ].join(","),
+      exclude_fields: "embedding"
+    });
+
+    return json;
+  }
+
+  /* ---------------- Facets preload ---------------- */
+
+  async function preloadFacets() {
+    // per_page=0 gives facets only
+    const facetBy = [
+      "chamber",
+      "committees",
+      "policy_area",
+      "status"
+    ].join(",");
+
+    const json = await tsGet(TS_DOCS_SEARCH, {
+      q: "*",
+      query_by: "title",
+      per_page: 0,
+      facet_by: facetBy,
+      max_facet_values: MAX_FACET_VALUES
+    });
+
+    const facets = json?.facet_counts || [];
+
+    const getFacet = (field) => facets.find(f => f.field_name === field);
+
+    // Chamber
+    const chamberFacet = getFacet("chamber");
+    facetOptions.chamber = (chamberFacet?.counts || []).map(c => ({
+      value: c.value,
+      label: c.value,
+      count: c.count
+    }));
+
+    // Committees
+    const comFacet = getFacet("committees");
+    facetOptions.committees = (comFacet?.counts || [])
+      .slice(0, MAX_COMMITTEES)
+      .map(c => ({ value: c.value, label: c.value, count: c.count }));
+
+    // Policy area
+    const polFacet = getFacet("policy_area");
+    facetOptions.policy_area = (polFacet?.counts || [])
+      .slice(0, MAX_POLICY)
+      .map(c => ({ value: c.value, label: c.value, count: c.count }));
+
+    // Status
+    const statFacet = getFacet("status");
+    facetOptions.status = sortStatusOptions((statFacet?.counts || [])
+      .slice(0, MAX_STATUS)
+      .map(c => ({ value: c.value, label: titleCaseFromToken(c.value), count: c.count })));
+
+    // Render options into UI if present
+    renderDropdownOptions("chamber");
+    renderDropdownOptions("committees");
+    renderDropdownOptions("policy_area");
+    renderDropdownOptions("sponsor_party");
+    renderDropdownOptions("status");
+    renderDropdownOptions("update_range");
+
+    updateAllBadges();
+  }
+
+  /* ---------------- OpenAI: embeddings ---------------- */
+
+  async function embedQuery(text) {
+    const input = String(text || "").trim();
+    if (!input) return [];
+
+    const res = await fetch(OA_EMBED_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        action: "embed",
-        input: q
+        model: EMBED_MODEL,
+        input: input
       })
     });
 
     if (!res.ok) {
-      throw new Error(`OpenAI embed failed: ${res.status}`);
+      const txt = await res.text().catch(() => "(no body)");
+      throw new Error(`Embeddings failed HTTP ${res.status}: ${txt}`);
     }
 
-    const data = await res.json();
-    if (!data || !data.embedding || !Array.isArray(data.embedding)) {
-      throw new Error("OpenAI embed: missing embedding");
+    const json = await res.json();
+    const vec = json?.data?.[0]?.embedding;
+
+    if (!Array.isArray(vec)) throw new Error("Embeddings response missing data[0].embedding");
+    if (EXPECTED_EMBED_DIMS && vec.length !== EXPECTED_EMBED_DIMS) {
+      console.warn("Embedding dims mismatch:", vec.length, "expected", EXPECTED_EMBED_DIMS);
     }
-    return data.embedding;
+
+    return vec;
   }
 
-  async function hybridSearchMulti(q, page, perPage) {
-    const filter_by = buildFilterBy();
+  /* ---------------- OpenAI: answer generation ---------------- */
 
-    // If no query, fallback to recent-ish listing
-    const query = String(q || "").trim() || "*";
-
-    // Build vector query only when keyword is provided (avoid embedding on blank)
-    let vector_query = "";
-    if (query !== "*" && query.length > 1) {
-      const emb = await embedQuery(query);
-      vector_query = `embedding:([${emb.join(",")}], k: 50)`;
-    }
+  async function generateAnswer({ userQuestion, primaryQuery, sources }) {
+    const question = String(userQuestion || "").trim();
+    const pq = String(primaryQuery || "").trim();
 
     const payload = {
-      searches: [
+      model: ANSWER_MODEL,
+      input: [
         {
-          collection: TYPESENSE_INDEX,
-          q: query,
-          query_by: "title,summary,display_id,sponsor_name,policy_area,committees,status",
-          filter_by: filter_by || undefined,
-          sort_by: query === "*" ? "update_date:desc" : undefined,
-          per_page: perPage,
-          page: page,
-          include_fields: "id,display_id,title,summary,congress,bill_type,bill_number,update_date,introduced_date,chamber,policy_area,committees,status,sponsor_name,sponsor_party,url",
-          facet_by: "chamber,committees,policy_area,sponsor_party,status",
-          max_facet_values: 50,
-          exhaustive_search: true,
-          vector_query: vector_query || undefined
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "You are helping a user understand U.S. Congress bills. " +
+                "Use ONLY the provided sources. " +
+                "Be concise, plain-English, and structured with short bullets when helpful. " +
+                "If the sources don't contain enough info, say what is missing."
+            }
+          ]
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text:
+                `User query: ${pq || question}\n\n` +
+                `Question: ${question || pq}\n\n` +
+                `Sources (JSON):\n${JSON.stringify(sources || [], null, 2)}`
+            }
+          ]
         }
-      ]
+      ],
+      temperature: 0.2
     };
 
-    const res = await fetch(`${API.TYPESENSE}/multi_search`, {
+    const res = await fetch(OA_RESPONSES_URL, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
 
     if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`Typesense multi_search failed: ${res.status} ${t}`);
+      const txt = await res.text().catch(() => "(no body)");
+      throw new Error(`Answer failed HTTP ${res.status}: ${txt}`);
     }
 
-    const data = await res.json();
+    const json = await res.json();
 
-    const r0 = data && data.results && data.results[0] ? data.results[0] : null;
-    const hits = r0 && Array.isArray(r0.hits) ? r0.hits.map(h => h.document) : [];
-    const found = r0 && typeof r0.found === "number" ? r0.found : 0;
-    const facets = r0 && Array.isArray(r0.facet_counts) ? r0.facet_counts : [];
+    // Responses API returns output array; safest: concatenate text parts
+    const out = json?.output || [];
+    let text = "";
 
-    return { hits, found, facets };
-  }
-
-  function countsToOptions(facetCounts) {
-    // facetCounts: [{field_name, counts:[{value,count}]}]
-    const out = {};
-    (facetCounts || []).forEach(fc => {
-      const field = fc.field_name;
-      const counts = (fc.counts || []).map(c => ({
-        value: c.value,
-        label: titleCaseFromToken(c.value),
-        count: c.count
-      }));
-      out[field] = counts;
-    });
-    return out;
-  }
-
-  function sortStatusOptions(opts) {
-    // Keep stable but prefer higher counts
-    return (opts || []).slice().sort((a, b) => (b.count || 0) - (a.count || 0));
-  }
-
-  async function preloadFacets() {
-    // Run a lightweight query to load facets for building options
-    const q = "*";
-    const { facets } = await hybridSearchMulti(q, 1, 1);
-
-    const map = countsToOptions(facets);
-
-    facetOptions.chamber = map.chamber || [];
-    facetOptions.committees = map.committees || [];
-    facetOptions.policy_area = map.policy_area || [];
-    // sponsor_party: keep hard-coded labels, but update counts
-    const partyCounts = map.sponsor_party || [];
-    facetOptions.sponsor_party = facetOptions.sponsor_party.map(p => {
-      const c = partyCounts.find(x => x.value === p.value);
-      return { ...p, count: c ? c.count : 0 };
-    });
-
-    facetOptions.status = sortStatusOptions(map.status || []);
-  }
-
-  /* ---------------------------------------------------
-     RENDER RESULTS
-  --------------------------------------------------- */
-
-  function setResultsCount(found) {
-    const el = document.getElementById("resultsCount");
-    if (!el) return;
-    el.textContent = (typeof found === "number") ? `${found.toLocaleString()} results` : "";
-  }
-
-  function showResultsSection() {
-    const mount = document.getElementById("results");
-    if (!mount) return;
-    mount.classList.remove("muted");
-  }
-
-  function renderResults(hits, found) {
-    const mount = document.getElementById("results");
-    if (!mount) return;
-
-    showResultsSection();
-
-    if (!hits || !hits.length) {
-      mount.innerHTML = `<div class="muted">No results found.</div>`;
-      setResultsCount(0);
-      return;
+    for (const item of out) {
+      const content = item?.content || [];
+      for (const part of content) {
+        if (part?.type === "output_text" && part?.text) text += part.text;
+      }
     }
 
-    setResultsCount(found);
-
-    const html = hits.map(doc => {
-      const dot = sponsorDotClass(doc.sponsor_party);
-      const party = sponsorPartyLabel(doc.sponsor_party);
-      const update = epochToDate(doc.update_date);
-      const intro = epochToDate(doc.introduced_date);
-      const committee = firstCommittee(doc);
-      const policy = doc.policy_area ? String(doc.policy_area) : "";
-      const status = doc.status ? String(doc.status) : "";
-
-      return `
-        <article class="result">
-          <div class="result__meta">
-            <span class="${dot}" aria-hidden="true"></span>
-            <span class="result__id">${escHtml(doc.display_id || "")}</span>
-            ${party ? `<span class="pill pill--party">${escHtml(party)}</span>` : ""}
-            ${status ? `<span class="pill">${escHtml(status)}</span>` : ""}
-          </div>
-
-          <h3 class="result__title">
-            <a href="${escHtml(doc.url || "#")}" target="_blank" rel="noopener">
-              ${escHtml(doc.title || "")}
-            </a>
-          </h3>
-
-          <div class="result__sub">
-            ${intro ? `<span><strong>Introduced:</strong> ${escHtml(intro)}</span>` : ""}
-            ${update ? `<span><strong>Updated:</strong> ${escHtml(update)}</span>` : ""}
-            ${committee ? `<span><strong>Committee:</strong> ${escHtml(committee)}</span>` : ""}
-            ${policy ? `<span><strong>Policy:</strong> ${escHtml(policy)}</span>` : ""}
-          </div>
-
-          ${doc.summary ? `<div class="result__summary">${parseTextToHtml(doc.summary)}</div>` : ""}
-        </article>
-      `;
-    }).join("");
-
-    const showMoreBtn = (found > (state.page * state.perPage))
-      ? `<button type="button" class="btn btn--ghost" id="showMoreBtn" style="margin-top:14px;">Show more</button>`
-      : "";
-
-    mount.innerHTML = `
-      <div class="results">
-        ${html}
-        ${showMoreBtn}
-      </div>
-    `;
+    return String(text || "").trim();
   }
 
-  /* ---------------------------------------------------
-     ANSWER UI
-  --------------------------------------------------- */
+  /* ---------------- Typesense hybrid search ---------------- */
+
+  async function hybridSearchMulti({ q, vector, perPage, page, alpha, filterBy }) {
+    const vectorQuery = (Array.isArray(vector) && vector.length)
+      ? `embedding:([${vector.join(",")}], alpha:${alpha ?? DEFAULT_ALPHA})`
+      : null;
+
+    const searchObj = {
+      collection: COLLECTION,
+      q: q,
+      query_by: "title,ai_summary_text,policy_area,subjects,committees,latest_action_text",
+      per_page: perPage,
+      page: page,
+      sort_by: "_text_match:desc,update_date:desc",
+      rerank_hybrid_matches: true,
+      include_fields: [
+        "id",
+        "title",
+        "type",
+        "number",
+        "congress",
+        "chamber",
+        "update_date",
+        "introduced_date",
+        "ai_summary_text",
+        "policy_area",
+        "subjects",
+        "committees",
+        "sponsor_party",
+        "sponsor_state",
+        "cosponsor_count",
+        "latest_action_text",
+        "status"
+      ].join(","),
+      exclude_fields: "embedding"
+    };
+
+    if (vectorQuery) searchObj.vector_query = vectorQuery;
+    if (filterBy) searchObj.filter_by = filterBy;
+
+    const body = { searches: [searchObj] };
+
+    const res = await fetch(TS_MULTI_SEARCH, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "(no body)");
+      throw new Error(`Search failed HTTP ${res.status}: ${txt}`);
+    }
+
+    const json = await res.json();
+    const first = json?.results?.[0];
+    if (!first) throw new Error("multi_search returned no results[]");
+    return first;
+  }
+
+  /* ---------------- AI Answer UI ---------------- */
 
   function ensureAnswerUI() {
-    // Preferred: index.html already provides the Answer UI (aiAnswerBody, aiSourcesLinks, aiFollowupForm, refreshAnswerBtn)
-    if (document.getElementById("aiAnswerBody")) return;
-
-    // Back-compat: if a legacy mount exists, build minimal UI
     const mount = document.getElementById("aiAnswer");
     if (!mount) return;
 
@@ -576,7 +826,7 @@
 
         <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
           <button type="button" id="aiRefreshBtn" class="search__btn" style="padding:10px 14px;">
-            Refresh
+            Refresh summary
           </button>
         </div>
 
@@ -616,298 +866,329 @@
     if (links) links.innerHTML = "";
   }
 
+  function renderAnswerText(answerText, sourceDocs) {
+    ensureAnswerUI();
+
+    const body = document.getElementById("aiAnswerBody");
+
+    if (body) {
+      if (window.simpleMarkdownToHTML) {
+        body.innerHTML = window.simpleMarkdownToHTML(answerText);
+      } else {
+        body.innerHTML = parseTextToHtml(answerText);
+      }
+    }
+
+    const links = document.getElementById("aiSourcesLinks");
+
+    if (links) {
+      const items = (sourceDocs || [])
+        .slice(0, ANSWER_SOURCES_LIMIT)
+        .map(d => {
+          const label = billShortId(d) || d.id;
+
+          return `
+            <a
+              href="./bill.html?id=${encodeURIComponent(d.id)}"
+              style="
+                display:inline-block;
+                margin:6px 8px 0 0;
+                color:var(--color-primary);
+                font-size:13px;
+              "
+            >
+              ${escHtml(label)}
+            </a>
+          `;
+        })
+        .join("");
+
+      links.innerHTML = items
+        ? `<div class="muted" style="font-size:12px;margin-top:6px;">Source bills:</div>${items}`
+        : "";
+    }
+  }
+
   function renderAnswerError(message) {
     ensureAnswerUI();
 
     const body = document.getElementById("aiAnswerBody");
-    if (body) {
-      body.innerHTML = `<div class="muted">${escHtml(message || "Something went wrong.")}</div>`;
-    }
-  }
 
-  function renderAnswerText(htmlText, sources) {
-    ensureAnswerUI();
-
-    const body = document.getElementById("aiAnswerBody");
     if (body) {
-      body.innerHTML = htmlText || `<div class="muted">No answer returned.</div>`;
+      body.innerHTML = `<div class="muted">${escHtml(message || "Could not generate an answer right now.")}</div>`;
     }
 
     const links = document.getElementById("aiSourcesLinks");
-    if (!links) return;
+    if (links) links.innerHTML = "";
+  }
 
-    if (!sources || !sources.length) {
-      links.innerHTML = "";
+  /* ---------------- render ---------------- */
+
+  function renderRecentBills(json) {
+    const $mount = window.jQuery("#recentBills");
+    if (!$mount.length) return;
+
+    const hits = json?.hits || [];
+    if (!hits.length) {
+      $mount.html(`<div class="muted">No recent bills found.</div>`);
       return;
     }
 
-    links.innerHTML = `
-      <div class="answer-sources">
-        <div class="answer-sources__label">Sources</div>
-        <div class="answer-sources__list">
-          ${sources.map((s, idx) => {
-            const title = s.title || s.display_id || `Source ${idx + 1}`;
-            const url = s.url || "#";
-            return `<a class="answer-source" href="${escHtml(url)}" target="_blank" rel="noopener">${escHtml(title)}</a>`;
-          }).join("")}
-        </div>
-      </div>
-    `;
-  }
+    const html = hits
+      .map(h => h.document)
+      .map(d => {
+        const committee = firstCommittee(d.committees);
+        const updated = epochToDate(d.update_date);
+        const dot = sponsorDotClass(d.sponsor_party);
+        const status = d.status ? titleCaseFromToken(d.status) : "";
 
-  function pickTopDocsForAnswer(hits, maxDocs) {
-    maxDocs = maxDocs || 8;
-    const docs = (hits || []).slice(0, maxDocs);
-    return docs.map(d => ({
-      title: d.title || "",
-      display_id: d.display_id || "",
-      summary: d.summary || "",
-      url: d.url || ""
-    }));
-  }
+        return `
+          <a class="billcard" href="./bill.html?id=${encodeURIComponent(d.id)}">
+            <span class="${dot}" aria-hidden="true" title="${escHtml(sponsorPartyLabel(d.sponsor_party))}"></span>
 
-  function buildSourcesBundle(hits) {
-    const docs = pickTopDocsForAnswer(hits, 10);
-    const text = docs.map((d, idx) => {
-      return `SOURCE ${idx + 1}\nID: ${d.display_id}\nTITLE: ${d.title}\nSUMMARY: ${d.summary}\nURL: ${d.url}\n`;
-    }).join("\n");
-    return { docs, text };
-  }
+            <div class="billcard__meta">
+              <div class="billcard__id">${escHtml(billShortId(d))}</div>
+              <div class="billcard__status">${escHtml(d.chamber || "")}${d.congress ? " • " + escHtml(String(d.congress)) + "th" : ""}${status ? " • " + escHtml(status) : ""}</div>
+            </div>
 
-  async function generateAnswer(question, hits) {
-    const bundle = buildSourcesBundle(hits);
+            <div class="billcard__title">${escHtml(d.title || "")}</div>
 
-    const res = await fetch(API.OPENAI, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        action: "answer",
-        question: question,
-        sourcesText: bundle.text
+            <div class="billcard__footer">
+              <div class="billcard__committee">${escHtml(committee || "Committee TBD")}</div>
+              <div class="billcard__date">${updated ? "Updated " + escHtml(updated) : ""}</div>
+            </div>
+          </a>
+        `;
       })
-    });
+      .join("");
 
-    if (!res.ok) {
-      throw new Error(`OpenAI answer failed: ${res.status}`);
-    }
-
-    const data = await res.json();
-    if (!data || !data.answer) {
-      throw new Error("OpenAI answer: missing answer");
-    }
-
-    return {
-      answer: data.answer,
-      sources: bundle.docs
-    };
+    $mount.html(html);
   }
 
-  async function runAnswerFlow(opts) {
-    const question = String(opts.question || "").trim();
-    const hits = opts.hits || [];
+  function renderResults(json, q) {
+    const $mount = window.jQuery("#results");
+    if (!$mount.length) return;
 
-    if (!question) return;
+    const found = json?.found ?? 0;
+    const hits = json?.hits || [];
 
-    state.isAnswerLoading = true;
-    renderAnswerLoading("Generating answer…");
+    setResultsCount(found);
+
+    if (!hits.length) {
+      $mount.html(`<div class="muted">No matches found.</div>`);
+      return;
+    }
+
+    const html = hits
+      .map(h => h.document)
+      .map(d => {
+        const updated = epochToDate(d.update_date);
+        const dot = sponsorDotClass(d.sponsor_party);
+        const committee = firstCommittee(d.committees);
+        const policy = d.policy_area ? String(d.policy_area) : "";
+        const summary = d.ai_summary_text ? String(d.ai_summary_text) : "";
+        const status = d.status ? titleCaseFromToken(d.status) : "";
+
+        return `
+          <div class="panel" style="margin-bottom:16px;">
+            <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span class="${dot}" aria-hidden="true" title="${escHtml(sponsorPartyLabel(d.sponsor_party))}"></span>
+                <div style="font-weight:600;font-size:14px;">
+                  ${escHtml(billShortId(d))}${d.chamber ? " • " + escHtml(d.chamber) : ""}${d.congress ? " • " + escHtml(String(d.congress)) + "th Congress" : ""}
+                </div>
+              </div>
+              <div style="font-size:12px;color:var(--color-muted);">
+                ${updated ? escHtml(updated) : ""}
+              </div>
+            </div>
+
+            <div style="margin-top:10px;">
+              <a href="./bill.html?id=${encodeURIComponent(d.id)}" style="font-weight:700;font-size:18px;line-height:1.35;display:inline-block;">
+                ${escHtml(d.title || "")}
+              </a>
+            </div>
+
+            ${summary ? `<div style="margin-top:10px;color:var(--color-muted);line-height:1.45;">${escHtml(summary)}</div>` : ""}
+
+            <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;">
+              ${policy ? `<span class="chip">${escHtml(policy)}</span>` : ""}
+              ${committee ? `<span class="chip">${escHtml(committee)}</span>` : ""}
+              ${status ? `<span class="chip">${escHtml(status)}</span>` : ""}
+              ${d.sponsor_party ? `<span class="chip">${escHtml(sponsorPartyLabel(d.sponsor_party))}${d.sponsor_state ? " • " + escHtml(String(d.sponsor_state)) : ""}</span>` : ""}
+              ${Number.isFinite(d.cosponsor_count) ? `<span class="chip">${escHtml(String(d.cosponsor_count))} cosponsors</span>` : ""}
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    $mount.html(html);
+  }
+
+  /* ---------------- state (so follow-ups + refresh work) ---------------- */
+
+  const state = {
+    lastPrimaryQuery: "",
+    lastHits: [],
+    lastSourceDocs: []
+  };
+
+  async function runAnswerFlow({ primaryQuery, question, hits }) {
+    ensureAnswerUI();
+
+    const sourceDocs = pickTopDocsForAnswer(hits, ANSWER_SOURCES_LIMIT);
+    const sourcesBundle = buildSourcesBundle(sourceDocs);
+
+    state.lastPrimaryQuery = primaryQuery;
+    state.lastHits = hits || [];
+    state.lastSourceDocs = sourceDocs;
+
+    renderAnswerLoading("Generating summary…");
 
     try {
-      const r = await generateAnswer(question, hits);
-      state.lastAnswerQuestion = question;
-      state.lastAnswerSources = r.sources || [];
-      state.lastAnswerText = r.answer || "";
-
-      renderAnswerText(parseTextToHtml(r.answer), r.sources);
-    } catch (err) {
-      renderAnswerError(err && err.message ? err.message : "Failed to generate answer.");
-    } finally {
-      state.isAnswerLoading = false;
+      const answerText = await generateAnswer({
+        userQuestion: question || primaryQuery,
+        primaryQuery,
+        sources: sourcesBundle
+      });
+      renderAnswerText(answerText, sourceDocs);
+    } catch (e) {
+      console.error(e);
+      renderAnswerError("Could not generate a summary right now. Try refresh, or adjust your query.");
     }
   }
 
-  /* ---------------------------------------------------
-     RECENT BILLS
-  --------------------------------------------------- */
-
-  async function fetchRecentBills() {
-    // Use Typesense sorted listing
-    const { hits } = await hybridSearchMulti("*", 1, (window.APP_CONFIG && window.APP_CONFIG.RECENT_BILLS_LIMIT) ? window.APP_CONFIG.RECENT_BILLS_LIMIT : 12);
-    return hits || [];
-  }
-
-  function renderRecentBills(items) {
-    const mount = document.getElementById("recentBills");
-    if (!mount) return;
-
-    if (!items || !items.length) {
-      mount.innerHTML = `<div class="muted">No recent bills found.</div>`;
-      return;
-    }
-
-    mount.innerHTML = items.map(doc => {
-      const update = epochToDate(doc.update_date);
-      const party = sponsorPartyLabel(doc.sponsor_party);
-      const dot = sponsorDotClass(doc.sponsor_party);
-      return `
-        <a class="card" href="${escHtml(doc.url || "#")}" target="_blank" rel="noopener">
-          <div class="card__meta">
-            <span class="${dot}" aria-hidden="true"></span>
-            <span class="card__id">${escHtml(doc.display_id || "")}</span>
-            ${party ? `<span class="pill pill--party">${escHtml(party)}</span>` : ""}
-          </div>
-          <div class="card__title">${escHtml(doc.title || "")}</div>
-          ${update ? `<div class="card__sub muted">Updated ${escHtml(update)}</div>` : ""}
-        </a>
-      `;
-    }).join("");
-  }
-
-  /* ---------------------------------------------------
-     MAIN SEARCH FLOW
-  --------------------------------------------------- */
+  /* ---------------- run search ---------------- */
 
   async function runSearch(q) {
-    const query = String(q || "").trim();
+    const raw = String(q || "").trim();
 
-    state.lastPrimaryQuery = query;
-    state.isSearching = true;
+    // Behavior:
+    // - If user typed nothing but filters are set, allow browse search with q="*"
+    // - If truly nothing, do nothing (matches old behavior)
+    const hasAnyFilters =
+      filterState.chamber.size ||
+      filterState.committees.size ||
+      filterState.policy_area.size ||
+      filterState.sponsor_party.size ||
+      filterState.status.size ||
+      (filterState.update_range && filterState.update_range !== "all");
 
-    const resultsMount = document.getElementById("results");
-    if (resultsMount) {
-      resultsMount.innerHTML = `<div class="muted">Searching…</div>`;
+    if (!raw && !hasAnyFilters) return;
+
+    const query = raw ? raw : "*";
+
+    showResultsSection();
+    ensureAnswerUI();
+
+    const $results = window.jQuery("#results");
+    if ($results.length) $results.html(`<div class="muted">Searching…</div>`);
+
+    renderAnswerLoading("Searching and generating summary…");
+
+    // Build filter_by
+    const filterBy = buildFilterBy();
+
+    // 1) embed query (ONLY if not browsing)
+    let vector = null;
+    if (query !== "*") {
+      vector = await embedQuery(query);
     }
 
-    try {
-      const { hits, found, facets } = await hybridSearchMulti(query, state.page, state.perPage);
-      state.lastHits = hits || [];
+    // 2) hybrid search
+    const result = await hybridSearchMulti({
+      q: query,
+      vector: vector || [],
+      perPage: RESULTS_PER_PAGE,
+      page: 1,
+      alpha: DEFAULT_ALPHA,
+      filterBy: filterBy
+    });
 
-      // Update facet options from live result set (so counts are contextual)
-      const map = countsToOptions(facets);
-      facetOptions.chamber = map.chamber || facetOptions.chamber;
-      facetOptions.committees = map.committees || facetOptions.committees;
-      facetOptions.policy_area = map.policy_area || facetOptions.policy_area;
+    // 3) render results
+    renderResults(result, query);
 
-      // sponsor_party counts
-      const partyCounts = map.sponsor_party || [];
-      facetOptions.sponsor_party = facetOptions.sponsor_party.map(p => {
-        const c = partyCounts.find(x => x.value === p.value);
-        return { ...p, count: c ? c.count : 0 };
-      });
-
-      facetOptions.status = sortStatusOptions(map.status || facetOptions.status);
-
-      // Re-render filter bodies + badges
-      ["chamber", "committees", "policy_area", "sponsor_party", "status", "update_range"].forEach(renderDropdownOptions);
-      updateAllBadges();
-
-      // Render results
-      renderResults(hits, found);
-
-      // If user asked a question (query with ?q=...), auto-answer on first search
-      const ask = getParam("ask");
-      if (ask && state.page === 1) {
-        await runAnswerFlow({ question: ask, hits: hits });
-      }
-
-    } catch (err) {
-      if (resultsMount) {
-        resultsMount.innerHTML = `<div class="muted">Search failed: ${escHtml(err && err.message ? err.message : "Unknown error")}</div>`;
-      }
-    } finally {
-      state.isSearching = false;
+    // 4) answer (only when user typed a real query)
+    const hits = result?.hits || [];
+    if (query === "*") {
+      renderAnswerError("Tip: Type a keyword query to generate an AI summary. Browsing mode does not generate summaries.");
+      // Still set state so refresh/follow-up works after a real search
+      state.lastPrimaryQuery = "";
+      state.lastHits = hits;
+      state.lastSourceDocs = pickTopDocsForAnswer(hits, ANSWER_SOURCES_LIMIT);
+      return;
     }
+
+    await runAnswerFlow({ primaryQuery: query, question: query, hits });
   }
 
-  /* ---------------------------------------------------
-     EVENTS
-  --------------------------------------------------- */
+  /* ---------------- boot ---------------- */
 
-  function bindUI() {
-    // Search submit
-    const form = document.getElementById("searchForm");
-    if (form) {
-      form.addEventListener("submit", function (ev) {
+  async function boot() {
+    const $ = await waitForjQuery();
+
+    // Filters UI (safe even if #filtersMount missing)
+    ensureFiltersUI();
+
+    // preload facets (safe failure)
+    try {
+      await preloadFacets();
+    } catch (e) {
+      console.warn("Facet preload failed:", e);
+      // leave dropdowns with “No options yet.” but keep everything else working
+      renderDropdownOptions("chamber");
+      renderDropdownOptions("committees");
+      renderDropdownOptions("policy_area");
+      renderDropdownOptions("status");
+      renderDropdownOptions("sponsor_party");
+      renderDropdownOptions("update_range");
+      updateAllBadges();
+    }
+
+    // recent bills
+    try {
+      const recent = await fetchRecentBills(RECENT_LIMIT);
+      renderRecentBills(recent);
+    } catch (e) {
+      console.error("Recent bills failed:", e);
+      const $mount = $("#recentBills");
+      if ($mount.length) $mount.html(`<div class="muted">Could not load recent bills.</div>`);
+    }
+
+    // ensure AI UI exists (even before first search)
+    ensureAnswerUI();
+
+    // bind search
+    const $form = $("#mainSearchForm");
+    const $input = $("#mainSearchInput");
+
+    if ($form.length && $input.length) {
+      $form.on("submit", async function (ev) {
         ev.preventDefault();
-        state.page = 1;
-
-        const input = document.getElementById("q");
-        const q = input ? String(input.value || "").trim() : "";
-        runSearch(q);
+        try {
+          await runSearch($input.val());
+        } catch (e) {
+          console.error(e);
+          showResultsSection();
+          $("#results").html(`<div class="muted">Search failed. Check console.</div>`);
+          renderAnswerError("Search failed, so I couldn’t generate a summary. Try again.");
+        }
       });
     }
 
-    // Show more
-    document.addEventListener("click", function (ev) {
-      const t = ev.target;
-      if (!(t instanceof Element)) return;
-
-      if (t && t.id === "showMoreBtn") {
-        const input = document.getElementById("q");
-        const q = input ? String(input.value || "").trim() : "";
-        state.page += 1;
-
-        // Append mode: re-run search then append additional results
-        (async function () {
-          try {
-            const { hits, found } = await hybridSearchMulti(q, state.page, state.perPage);
-            state.lastHits = state.lastHits.concat(hits || []);
-
-            // Append by re-rendering full list (simple + stable)
-            renderResults(state.lastHits, found);
-          } catch (err) {
-            // ignore
-          }
-        })();
-      }
-    });
-
-    // Filter interactions (delegated)
-    document.addEventListener("change", function (ev) {
-      const t = ev.target;
-      if (!(t instanceof HTMLInputElement)) return;
-
-      const wrap = t.closest(".filter-acc__body");
-      if (!wrap) return;
-
-      const key = wrap.getAttribute("data-options");
-      if (!key) return;
-
-      if (key === "update_range") {
-        filterState.update_range = t.value || "all";
-        updateBadge("update_range");
-        triggerSearchFromUI();
-        return;
-      }
-
-      if (!filterState[key]) return;
-
-      if (t.checked) filterState[key].add(t.value);
-      else filterState[key].delete(t.value);
-
-      updateBadge(key);
-      triggerSearchFromUI();
-    });
-
-    // Clear filters
-    document.addEventListener("click", function (ev) {
-      const t = ev.target;
-      if (!(t instanceof Element)) return;
-      if (t && t.id === "clearFiltersBtn") {
-        clearAllFilters();
-      }
-    });
-
-    // Answer refresh + follow-up handlers (delegated)
+    // bind refresh + follow-up handlers (delegated)
     document.addEventListener("click", async function (ev) {
       const t = ev.target;
       if (!(t instanceof Element)) return;
 
-      if (t && (t.id === "aiRefreshBtn" || t.id === "refreshAnswerBtn")) {
+      if (t && t.id === "aiRefreshBtn") {
         if (!state.lastPrimaryQuery || !state.lastHits.length) {
           renderAnswerError("Run a search first, then refresh the summary.");
           return;
         }
         await runAnswerFlow({
+          primaryQuery: state.lastPrimaryQuery,
           question: state.lastPrimaryQuery,
           hits: state.lastHits
         });
@@ -918,33 +1199,49 @@
       const form = ev.target;
       if (!(form instanceof HTMLFormElement)) return;
 
-      if (form.id === "aiFollowUpForm" || form.id === "aiFollowupForm") {
+      if (form.id === "aiFollowUpForm") {
         ev.preventDefault();
 
-        const input = document.getElementById("aiFollowUpInput") || document.getElementById("aiFollowupInput");
+        const input = document.getElementById("aiFollowUpInput");
         const follow = input ? String(input.value || "").trim() : "";
 
         if (!follow) return;
 
         if (!state.lastPrimaryQuery || !state.lastHits.length) {
-          renderAnswerError("Run a search first, then ask a follow-up question.");
+          renderAnswerError("Run a search first, then ask a follow-up.");
           return;
         }
 
-        if (input) input.value = "";
-
         await runAnswerFlow({
+          primaryQuery: state.lastPrimaryQuery,
           question: follow,
           hits: state.lastHits
         });
       }
     });
+
+    // auto-run ?q=
+    const qParam = getParam("q");
+    if (qParam && $input.length) {
+      $input.val(qParam);
+      try {
+        await runSearch(qParam);
+      } catch (e) {
+        console.error(e);
+      }
+    }
   }
 
-  /* ---------------------------------------------------
-     ACCORDION ANIMATION (jQuery)
-  --------------------------------------------------- */
+  if (window.onReady) window.onReady(boot);
+  else document.addEventListener("DOMContentLoaded", boot);
+})();
 
+/* =========================================================
+   Filters accordion UX
+   - Allows multiple panels open (no "close others")
+   - jQuery slideDown/slideUp for smooth animation
+========================================================= */
+(function () {
   function bindFiltersAccordion(mountEl) {
     if (!mountEl) return;
     if (!window.jQuery) return;
@@ -985,70 +1282,12 @@
         $panel.hide().stop(true, true).slideDown(180);
       }
     });
-
-    // Keyboard: Space/Enter should act like click on summary
-    $mount.on("keydown", ".filter-acc__toggle", function (e) {
-      if (e.key === " " || e.key === "Enter") {
-        e.preventDefault();
-        window.jQuery(this).trigger("click");
-      }
-    });
   }
 
-  /* ---------------------------------------------------
-     BOOT
-  --------------------------------------------------- */
+  document.addEventListener("DOMContentLoaded", function () {
+    var mount = document.getElementById("filtersMount");
+    if (mount) bindFiltersAccordion(mount);
+  });
 
-  async function boot() {
-    // Ensure jQuery is available for accordion animation (not required for search)
-    await waitForjQuery(6000);
-
-    ensureFiltersUI();
-    ensureAnswerUI();
-
-    // Load facets and render filter options
-    try {
-      await preloadFacets();
-      ["chamber", "committees", "policy_area", "sponsor_party", "status", "update_range"].forEach(renderDropdownOptions);
-      updateAllBadges();
-    } catch (e) {
-      // If facets fail, still keep UI functional
-      ["chamber", "committees", "policy_area", "sponsor_party", "status", "update_range"].forEach(renderDropdownOptions);
-      updateAllBadges();
-    }
-
-    // Load recent bills
-    try {
-      recentBillsCache = await fetchRecentBills();
-      renderRecentBills(recentBillsCache);
-    } catch (e) {
-      // ignore
-    }
-
-    bindUI();
-
-    // Auto-run search if query param exists
-    const qParam = getParam("q");
-    const input = document.getElementById("q");
-    if (qParam && input) {
-      input.value = qParam;
-      state.page = 1;
-      runSearch(qParam);
-    }
-  }
-
-  document.addEventListener("DOMContentLoaded", boot);
-
-  // Expose for debugging
-  window.__aiSearch = {
-    state,
-    filterState,
-    facetOptions,
-    runSearch,
-    runAnswerFlow
-  };
-
-  // Expose accordion binder for safety
   window.__bindFiltersAccordion = bindFiltersAccordion;
-
 })();
