@@ -564,6 +564,14 @@
         renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", html: "", pdfUrl: "" }, doc);
       }
 
+      try {
+        const textData = await fetchBillText(doc);
+        renderBillText(textData, doc);
+      } catch (textErr) {
+        console.warn("[bill-text] failed to load bill text", textErr);
+        renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", html: "", pdfUrl: "" }, doc);
+      }
+
       const related = await fetchRelatedBills(doc);
       renderRelated(related);
     } catch (e) {
