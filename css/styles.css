@@ -600,6 +600,24 @@ img { max-width: 100%; }
 .bill-detail__actions {
   margin-top: 16px;
 }
+
+.bill-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 2px solid var(--color-border);
+}
+.bill-action {
+  margin: 0 0 10px 0;
+  padding-left: 12px;
+}
+.bill-action__date {
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.bill-action__text {
+  line-height: 1.45;
+}
 .bill-detail__button {
   display: inline-flex;
   align-items: center;
@@ -663,7 +681,7 @@ img { max-width: 100%; }
   margin-bottom: 8px;
   font-size: 14px;
 }
- .bill-qa__messages {
+.bill-qa__messages {
   min-height: 48px;
   max-height: 260px;
   overflow: auto;
