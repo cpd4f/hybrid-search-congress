@@ -9,9 +9,29 @@
   const DEFAULT_ALPHA = (window.APP_CONFIG && window.APP_CONFIG.HYBRID_ALPHA) || 0.65;
 
   const TS_DOCS_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
-  const TS_DOC_BY_ID_BASE = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents`;
   const TS_MULTI_SEARCH = `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/multi_search`;
   const OA_EMBED_URL = `${OPENAI_WORKER_BASE.replace(/\/$/, "")}/embeddings`;
+  const BILL_INCLUDE_FIELDS = [
+    "id",
+    "title",
+    "type",
+    "number",
+    "congress",
+    "chamber",
+    "status",
+    "committees",
+    "policy_area",
+    "subjects",
+    "sponsor_party",
+    "sponsor_state",
+    "cosponsor_count",
+    "introduced_date",
+    "update_date",
+    "latest_action_text",
+    "ai_summary_text",
+    "official_summary_text",
+    "official_summary"
+  ].join(",");
 
   function getParam(name) {
     const u = new URL(window.location.href);
@@ -65,54 +85,115 @@
     const cleanId = String(id || "").trim();
     if (!cleanId) return null;
 
-    // Primary path: direct Typesense document fetch by id (e.g. 119-hr-4362)
-    const directUrl = `${TS_DOC_BY_ID_BASE}/${encodeURIComponent(cleanId)}`;
-    const directRes = await fetch(directUrl);
+    async function runSearchAttempt(label, targetId) {
+      const params = new URLSearchParams({
+        q: "*",
+        query_by: "title,ai_summary_text",
+        per_page: "1",
+        page: "1",
+        filter_by: `id:=${escFilterVal(targetId)}`,
+        include_fields: BILL_INCLUDE_FIELDS
+      });
 
-    if (directRes.ok) {
-      return await directRes.json();
+      const url = `${TS_DOCS_SEARCH}?${params.toString()}`;
+      console.info(`[bill] ${label}: GET ${url}`);
+      const res = await fetch(url);
+      const bodyText = await res.text().catch(() => "");
+      console.info(`[bill] ${label}: status ${res.status}`);
+
+      if (!res.ok) {
+        console.warn(`[bill] ${label}: failed response`, bodyText || "(no body)");
+        throw new Error(`${label} failed HTTP ${res.status}: ${bodyText || "(no body)"}`);
+      }
+
+      let json;
+      try {
+        json = bodyText ? JSON.parse(bodyText) : {};
+      } catch (parseErr) {
+        console.warn(`[bill] ${label}: invalid JSON`, parseErr);
+        throw new Error(`${label} returned invalid JSON.`);
+      }
+
+      const hits = json?.hits || [];
+      console.info(`[bill] ${label}: hits=${hits.length}`);
+      return hits[0]?.document || null;
     }
 
-    // Fallback path: search endpoint filtered by exact id
-    const params = new URLSearchParams({
-      q: "*",
-      query_by: "title,ai_summary_text",
-      per_page: "1",
-      page: "1",
-      filter_by: `id:=${escFilterVal(cleanId)}`,
-      include_fields: [
-        "id",
-        "title",
-        "type",
-        "number",
-        "congress",
-        "chamber",
-        "status",
-        "committees",
-        "policy_area",
-        "subjects",
-        "sponsor_party",
-        "sponsor_state",
-        "cosponsor_count",
-        "introduced_date",
-        "update_date",
-        "latest_action_text",
-        "ai_summary_text",
-        "official_summary_text",
-        "official_summary"
-      ].join(",")
+    const attempts = [
+      { label: "exact-id-search", value: cleanId },
+      { label: "lowercase-id-search", value: cleanId.toLowerCase() }
+    ];
+
+    let lastError = null;
+    for (const attempt of attempts) {
+      if (!attempt.value) continue;
+      try {
+        const doc = await runSearchAttempt(attempt.label, attempt.value);
+        if (doc) {
+          console.info(`[bill] ${attempt.label}: found document`, doc.id);
+          return doc;
+        }
+        console.info(`[bill] ${attempt.label}: no matching document`);
+      } catch (err) {
+        lastError = err;
+        console.warn(`[bill] ${attempt.label}: lookup error`, err);
+      }
+    }
+
+    const multiSearchBody = {
+      searches: attempts
+        .filter((attempt, i, arr) => attempt.value && arr.findIndex(a => a.value === attempt.value) === i)
+        .map((attempt) => ({
+          collection: COLLECTION,
+          q: "*",
+          query_by: "title,ai_summary_text",
+          per_page: 1,
+          page: 1,
+          filter_by: `id:=${escFilterVal(attempt.value)}`,
+          include_fields: BILL_INCLUDE_FIELDS
+        }))
+    };
+
+    if (!multiSearchBody.searches.length) return null;
+
+    console.info("[bill] multi-search-fallback: POST", multiSearchBody);
+    const multiRes = await fetch(TS_MULTI_SEARCH, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(multiSearchBody)
     });
 
-    const searchRes = await fetch(`${TS_DOCS_SEARCH}?${params.toString()}`);
-    if (!searchRes.ok) {
-      const directErr = await directRes.text().catch(() => "(no body)");
-      const searchErr = await searchRes.text().catch(() => "(no body)");
-      throw new Error(`Bill lookup failed (direct ${directRes.status} / search ${searchRes.status}): ${directErr} :: ${searchErr}`);
+    const multiBodyText = await multiRes.text().catch(() => "");
+    console.info(`[bill] multi-search-fallback: status ${multiRes.status}`);
+    if (!multiRes.ok) {
+      console.warn("[bill] multi-search-fallback: failed response", multiBodyText || "(no body)");
+      const lastErrMsg = lastError ? ` Previous error: ${lastError.message}` : "";
+      throw new Error(`multi-search-fallback failed HTTP ${multiRes.status}: ${multiBodyText || "(no body)"}.${lastErrMsg}`);
     }
 
-    const json = await searchRes.json();
-    const hit = (json?.hits || [])[0];
-    return hit?.document || null;
+    let multiJson;
+    try {
+      multiJson = multiBodyText ? JSON.parse(multiBodyText) : {};
+    } catch (parseErr) {
+      console.warn("[bill] multi-search-fallback: invalid JSON", parseErr);
+      throw new Error("multi-search-fallback returned invalid JSON.");
+    }
+
+    const results = multiJson?.results || [];
+    console.info(`[bill] multi-search-fallback: results=${results.length}`);
+    for (let i = 0; i < results.length; i += 1) {
+      const resultHits = results[i]?.hits || [];
+      console.info(`[bill] multi-search-fallback: result[${i}] hits=${resultHits.length}`);
+      if (resultHits[0]?.document) {
+        console.info("[bill] multi-search-fallback: found document", resultHits[0].document.id);
+        return resultHits[0].document;
+      }
+    }
+
+    if (lastError) {
+      console.warn("[bill] lookup completed with prior errors and no document match", lastError);
+    }
+    return null;
   }
 
   async function embedText(text) {
