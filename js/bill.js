@@ -88,7 +88,8 @@
   const billQaState = {
     history: [],
     currentDoc: null,
-    currentTextData: null
+    currentTextData: null,
+    currentCosponsors: []
   };
 
   function parseTextToHtml(text) {
@@ -353,7 +354,7 @@
     return (json?.results?.[0]?.hits || []).map(h => h.document).filter(Boolean);
   }
 
-  function renderBillDetail(doc, congressUrlOverride) {
+  function renderBillDetail(doc, congressUrlOverride, cosponsors) {
     const mount = document.getElementById("billMain");
     if (!mount) return;
 
@@ -368,6 +369,10 @@
     const partyClass = sponsorDotClass(doc.sponsor_party);
     const officialSummary = doc.official_summary_text || doc.official_summary || "Official summary unavailable in index data.";
     const congressUrl = congressUrlOverride || congressGovBillUrl(doc);
+    const list = Array.isArray(cosponsors) ? cosponsors : [];
+    const originals = list.filter((c) => c.isOriginalCosponsor);
+    const shown = originals.length ? originals : list.slice(0, 1);
+    const hidden = list.filter((c) => !shown.includes(c));
 
     mount.innerHTML = `
       <div class="panel__body">
@@ -406,6 +411,17 @@
             <section class="bill-detail__section">
               <h2 class="bill-detail__sectiontitle">Latest action</h2>
               <p class="bill-detail__summary">${escHtml(doc.latest_action_text)}</p>
+            </section>
+          ` : ""}
+
+          ${list.length ? `
+            <section class="bill-detail__section">
+              <h2 class="bill-detail__sectiontitle">Sponsors & cosponsors</h2>
+              <ul class="bill-cosponsors">
+                ${shown.map((c) => `<li class="bill-cosponsor"><span class="bill-cosponsor__name">${escHtml(c.fullName)}</span>${c.sponsorshipDate ? `<span class="bill-cosponsor__meta muted">Joined ${escHtml(c.sponsorshipDate)}</span>` : ""}</li>`).join("")}
+                ${hidden.map((c) => `<li class="bill-cosponsor bill-cosponsor--extra" hidden><span class="bill-cosponsor__name">${escHtml(c.fullName)}</span>${c.sponsorshipDate ? `<span class="bill-cosponsor__meta muted">Joined ${escHtml(c.sponsorshipDate)}</span>` : ""}</li>`).join("")}
+              </ul>
+              ${hidden.length ? `<button type="button" class="bill-cosponsors__toggle" id="billCosponsorsToggle" data-expanded="0">Show all cosponsors (${list.length})</button>` : ""}
             </section>
           ` : ""}
 
@@ -452,6 +468,37 @@
     }
 
     return fallback;
+  }
+
+  function normalizeCosponsorsPayload(json) {
+    const direct = Array.isArray(json?.cosponsors) ? json.cosponsors : [];
+    const alt = Array.isArray(json?.bill?.cosponsors) ? json.bill.cosponsors : [];
+    const anyArray = Object.values(json || {}).find((v) => Array.isArray(v) && v.some((x) => x && typeof x === "object" && (x.fullName || x.lastName)));
+    const raw = direct.length ? direct : (alt.length ? alt : (Array.isArray(anyArray) ? anyArray : []));
+
+    return raw.map((c) => ({
+      fullName: c?.fullName || [c?.firstName, c?.lastName].filter(Boolean).join(" ") || "Unknown",
+      party: c?.party || "",
+      state: c?.state || "",
+      district: c?.district,
+      sponsorshipDate: c?.sponsorshipDate || "",
+      isOriginalCosponsor: Boolean(c?.isOriginalCosponsor),
+      bioguideId: c?.bioguidId || c?.bioguideId || ""
+    }));
+  }
+
+  async function fetchBillCosponsors(doc) {
+    const parsed = parseBillId(doc?.id) || parseBillId(`${doc?.congress || ""}-${doc?.type || ""}-${doc?.number || ""}`);
+    if (!parsed) return [];
+    try {
+      const json = await fetchCongressJson(`/v3/bill/${parsed.congress}/${parsed.type}/${parsed.number}/cosponsors`, { format: "json", limit: 250 });
+      const normalized = normalizeCosponsorsPayload(json);
+      console.info(`[bill] cosponsors fetched count=${normalized.length}`);
+      return normalized;
+    } catch (e) {
+      console.warn("[bill] cosponsors fetch failed", e);
+      return [];
+    }
   }
 
   async function fetchHtmlDocumentFromUrl(rawUrl) {
@@ -513,7 +560,7 @@
     };
   }
 
-  function renderBillText(textData, doc) {
+  function renderBillText(textData, doc, cosponsors) {
     const mount = document.getElementById("billFullText");
     if (!mount) return;
 
@@ -543,11 +590,7 @@
       <div class="panel__body">
         <section class="bill-qa">
           <div class="bill-qa__title">Ask a question about the bill</div>
-          <div id="billQaMessages" class="bill-qa__messages">
-            <div class="bill-qa__row bill-qa__row--assistant">
-              <div class="bill-qa__bubble bill-qa__bubble--assistant muted">Ask a question to get a bill-specific answer.</div>
-            </div>
-          </div>
+          <div id="billQaMessages" class="bill-qa__messages"></div>
           <form id="billQaForm" class="bill-qa__form">
             <input id="billQaInput" class="bill-qa__input" type="text" autocomplete="off" placeholder="Ask about this bill…" />
             <button type="submit" class="bill-qa__btn">Ask</button>
@@ -557,11 +600,11 @@
       </div>
     `;
 
-    wireBillQa(doc, textData);
+    wireBillQa(doc, textData, cosponsors);
   }
 
 
-  async function generateBillAnswer({ doc, textData, question, history }) {
+  async function generateBillAnswer({ doc, textData, question, history, cosponsors }) {
     const textSnippet = String(textData?.html || "")
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -588,6 +631,7 @@
       `AI summary: ${doc?.ai_summary_text || ""}`,
       `Official summary: ${doc?.official_summary_text || doc?.official_summary || ""}`,
       `Bill text version: ${textData?.summary || ""}`,
+      `Original cosponsors: ${(Array.isArray(cosponsors) ? cosponsors.filter((c) => c.isOriginalCosponsor) : []).map((c) => c.fullName).join("; ") || "Unknown"}`,
       textSnippet ? `Bill text excerpt: ${textSnippet}` : "",
       prior ? `Conversation so far:
 ${prior}` : "",
@@ -654,10 +698,11 @@ ${prior}` : "",
     return bubble;
   }
 
-  function wireBillQa(doc, textData) {
+  function wireBillQa(doc, textData, cosponsors) {
     billQaState.currentDoc = doc;
     billQaState.currentTextData = textData;
     billQaState.history = [];
+    billQaState.currentCosponsors = Array.isArray(cosponsors) ? cosponsors : [];
 
     const askForm = document.getElementById("billQaForm");
     const askInput = document.getElementById("billQaInput");
@@ -678,7 +723,8 @@ ${prior}` : "",
           doc: billQaState.currentDoc,
           textData: billQaState.currentTextData,
           question: q,
-          history: billQaState.history
+          history: billQaState.history,
+          cosponsors: billQaState.currentCosponsors
         });
 
         billQaState.history.push({ role: "user", text: q });
@@ -693,6 +739,23 @@ ${prior}` : "",
         console.warn("[bill-qa] failed", err);
         if (pendingBubble) pendingBubble.innerHTML = `<span class="muted">I couldn't answer that right now. Please try again.</span>`;
       }
+    });
+  }
+
+
+  function wireCosponsorsToggle() {
+    const btn = document.getElementById("billCosponsorsToggle");
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      const expanded = btn.getAttribute("data-expanded") === "1";
+      const extras = document.querySelectorAll(".bill-cosponsor--extra");
+      const baseCount = document.querySelectorAll(".bill-cosponsor:not(.bill-cosponsor--extra)").length;
+      extras.forEach((el) => {
+        if (expanded) el.setAttribute("hidden", "");
+        else el.removeAttribute("hidden");
+      });
+      btn.setAttribute("data-expanded", expanded ? "0" : "1");
+      btn.textContent = expanded ? `Show all cosponsors (${baseCount + extras.length})` : "Show fewer";
     });
   }
 
@@ -741,14 +804,16 @@ ${prior}` : "",
       }
 
       const congressPermalink = await fetchCongressPermalink(doc);
-      renderBillDetail(doc, congressPermalink);
+      const cosponsors = await fetchBillCosponsors(doc);
+      renderBillDetail(doc, congressPermalink, cosponsors);
+      wireCosponsorsToggle();
 
       try {
         const textData = await fetchBillText(doc);
-        renderBillText(textData, doc);
+        renderBillText(textData, doc, cosponsors);
       } catch (textErr) {
         console.warn("[bill-text] failed to load bill text", textErr);
-        renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", html: "", pdfUrl: "" }, doc);
+        renderBillText({ summary: "Failed to load bill text from Congress.gov proxy.", html: "", pdfUrl: "" }, doc, cosponsors);
       }
 
       const related = await fetchRelatedBills(doc);

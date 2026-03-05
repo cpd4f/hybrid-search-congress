@@ -561,6 +561,42 @@ img { max-width: 100%; }
 .bill-detail__fact-label {
   font-weight: 700;
 }
+
+.bill-cosponsors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.bill-cosponsor {
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
+}
+.bill-cosponsor:first-child {
+  border-top: 0;
+}
+.bill-cosponsor__name {
+  display: block;
+  font-weight: 600;
+}
+.bill-cosponsor__meta {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+}
+.bill-cosponsors__toggle {
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bill-cosponsors__toggle:hover {
+  border-color: var(--color-primary);
+}
 .bill-detail__actions {
   margin-top: 16px;
 }
@@ -627,7 +663,8 @@ img { max-width: 100%; }
   margin-bottom: 8px;
   font-size: 14px;
 }
-.bill-qa__messages {
+ .bill-qa__messages {
+  min-height: 48px;
   max-height: 260px;
   overflow: auto;
   border: 1px solid var(--color-border);
