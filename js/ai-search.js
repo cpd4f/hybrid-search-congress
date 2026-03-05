@@ -390,12 +390,13 @@
 
   function renderAccordionItem(key, label) {
     return `
-      <details class="filter-acc__item" data-key="${escHtml(key)}">
+      <details class="filter-acc__item" open>
         <summary class="filter-acc__toggle">
           <span class="filter-acc__label">${escHtml(label)}</span>
           <span class="filter-acc__badge" data-badge="${escHtml(key)}"></span>
-          <span class="filter-acc__chev" aria-hidden="true">▾</span>
+          <span class="filter-acc__chev">⌄</span>
         </summary>
+
         <div class="filter-acc__panel">
           <div class="filter-acc__body" data-options="${escHtml(key)}">
             <div class="muted">Loading…</div>
@@ -808,7 +809,16 @@
 
   function ensureAnswerUI() {
     const mount = document.getElementById("aiAnswer");
+    const headActions = document.getElementById("aiAnswerHeadActions");
     if (!mount) return;
+
+    if (headActions && !headActions.querySelector("#aiRefreshBtn")) {
+      headActions.innerHTML = `
+        <button type="button" id="aiRefreshBtn" class="search__btn" style="padding:10px 14px; height:auto;">
+          Refresh summary
+        </button>
+      `;
+    }
 
     if (mount.querySelector("[data-ai-answer-ui='1']")) return;
 
@@ -816,12 +826,6 @@
       <div data-ai-answer-ui="1">
         <div id="aiAnswerBody" class="muted" style="line-height:1.5;">
           Ask a question above to get a plain-English answer.
-        </div>
-
-        <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
-          <button type="button" id="aiRefreshBtn" class="search__btn" style="padding:10px 14px;">
-            Refresh summary
-          </button>
         </div>
 
         <form id="aiFollowUpForm" style="margin-top:14px;">
@@ -951,199 +955,188 @@
     const body = document.getElementById("aiAnswerBody");
 
     if (body) {
-      body.innerHTML = `<div class="muted">${escHtml(message || "Could not generate an answer right now.")}</div>`;
+      body.innerHTML = `<div class="muted">${escHtml(message || "Could not generate an answer.")}</div>`;
     }
 
     const links = document.getElementById("aiSourcesLinks");
     if (links) links.innerHTML = "";
   }
 
-  /* ---------------- render ---------------- */
+  /* ---------------- Result rendering ---------------- */
 
   function renderRecentBills(json) {
-    const $mount = window.jQuery("#recentBills");
-    if (!$mount.length) return;
+    const mount = document.getElementById("recentBills");
+    if (!mount) return;
 
     const hits = json?.hits || [];
     if (!hits.length) {
-      $mount.html(`<div class="muted">No recent bills found.</div>`);
+      mount.innerHTML = `<div class="muted">No recent bills found.</div>`;
       return;
     }
 
-    const html = hits
-      .map(h => h.document)
-      .map(d => {
-        const committee = firstCommittee(d.committees);
-        const updated = epochToDate(d.update_date);
-        const dot = sponsorDotClass(d.sponsor_party);
-        const status = d.status ? titleCaseFromToken(d.status) : "";
+    const cards = hits.map(h => h.document).map(d => {
+      const short = billShortId(d);
+      const committee = firstCommittee(d.committees);
+      const partyLabel = sponsorPartyLabel(d.sponsor_party);
+      const partyClass = sponsorDotClass(d.sponsor_party);
 
-        return `
-          <a class="billcard" href="./bill.html?id=${encodeURIComponent(d.id)}">
-            <span class="${dot}" aria-hidden="true" title="${escHtml(sponsorPartyLabel(d.sponsor_party))}"></span>
+      return `
+        <article class="billcard">
+          <div class="billcard__meta">
+            <span class="chip">${escHtml(short || d.id)}</span>
+            <span class="muted">${escHtml(epochToDate(d.update_date))}</span>
+          </div>
+          <h3 class="billcard__title">${escHtml(d.title || "(Untitled bill)")}</h3>
+          <div class="billcard__sub muted">
+            ${escHtml(d.chamber || "")}
+            ${committee ? ` • ${escHtml(committee)}` : ""}
+          </div>
+          <div class="billcard__sub" style="margin-top:8px;">
+            <span class="${partyClass}" aria-hidden="true"></span>
+            <span class="muted">${escHtml(partyLabel)}</span>
+          </div>
+          <div style="margin-top:12px;">
+            <a class="link" href="./bill.html?id=${encodeURIComponent(d.id)}">Open bill</a>
+          </div>
+        </article>
+      `;
+    }).join("");
 
-            <div class="billcard__meta">
-              <div class="billcard__id">${escHtml(billShortId(d))}</div>
-              <div class="billcard__status">${escHtml(d.chamber || "")}${d.congress ? " • " + escHtml(String(d.congress)) + "th" : ""}${status ? " • " + escHtml(status) : ""}</div>
-            </div>
-
-            <div class="billcard__title">${escHtml(d.title || "")}</div>
-
-            <div class="billcard__footer">
-              <div class="billcard__committee">${escHtml(committee || "Committee TBD")}</div>
-              <div class="billcard__date">${updated ? "Updated " + escHtml(updated) : ""}</div>
-            </div>
-          </a>
-        `;
-      })
-      .join("");
-
-    $mount.html(html);
+    mount.innerHTML = cards;
   }
 
   function renderResults(json, q) {
-    const $mount = window.jQuery("#results");
-    if (!$mount.length) return;
+    const mount = document.getElementById("results");
+    if (!mount) return;
 
-    const found = json?.found ?? 0;
     const hits = json?.hits || [];
-
+    const found = Number(json?.found || hits.length || 0);
     setResultsCount(found);
 
     if (!hits.length) {
-      $mount.html(`<div class="muted">No matches found.</div>`);
+      mount.innerHTML = `<div class="muted">No results found for "${escHtml(q)}".</div>`;
       return;
     }
 
-    const html = hits
-      .map(h => h.document)
-      .map(d => {
-        const updated = epochToDate(d.update_date);
-        const dot = sponsorDotClass(d.sponsor_party);
-        const committee = firstCommittee(d.committees);
-        const policy = d.policy_area ? String(d.policy_area) : "";
-        const summary = d.ai_summary_text ? String(d.ai_summary_text) : "";
-        const status = d.status ? titleCaseFromToken(d.status) : "";
+    mount.innerHTML = hits.map(h => {
+      const d = h.document || {};
+      const short = billShortId(d);
+      const committee = firstCommittee(d.committees);
+      const partyLabel = sponsorPartyLabel(d.sponsor_party);
+      const partyClass = sponsorDotClass(d.sponsor_party);
 
-        return `
-          <div class="panel" style="margin-bottom:16px;">
-            <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
-              <div style="display:flex;align-items:center;gap:10px;">
-                <span class="${dot}" aria-hidden="true" title="${escHtml(sponsorPartyLabel(d.sponsor_party))}"></span>
-                <div style="font-weight:600;font-size:14px;">
-                  ${escHtml(billShortId(d))}${d.chamber ? " • " + escHtml(d.chamber) : ""}${d.congress ? " • " + escHtml(String(d.congress)) + "th Congress" : ""}
-                </div>
-              </div>
-              <div style="font-size:12px;color:var(--color-muted);">
-                ${updated ? escHtml(updated) : ""}
-              </div>
-            </div>
-
-            <div style="margin-top:10px;">
-              <a href="./bill.html?id=${encodeURIComponent(d.id)}" style="font-weight:700;font-size:18px;line-height:1.35;display:inline-block;">
-                ${escHtml(d.title || "")}
-              </a>
-            </div>
-
-            ${summary ? `<div style="margin-top:10px;color:var(--color-muted);line-height:1.45;">${escHtml(summary)}</div>` : ""}
-
-            <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;">
-              ${policy ? `<span class="chip">${escHtml(policy)}</span>` : ""}
-              ${committee ? `<span class="chip">${escHtml(committee)}</span>` : ""}
-              ${status ? `<span class="chip">${escHtml(status)}</span>` : ""}
-              ${d.sponsor_party ? `<span class="chip">${escHtml(sponsorPartyLabel(d.sponsor_party))}${d.sponsor_state ? " • " + escHtml(String(d.sponsor_state)) : ""}</span>` : ""}
-              ${Number.isFinite(d.cosponsor_count) ? `<span class="chip">${escHtml(String(d.cosponsor_count))} cosponsors</span>` : ""}
-            </div>
+      return `
+        <article class="resultcard">
+          <div class="resultcard__meta">
+            <span class="chip">${escHtml(short || d.id || "")}</span>
+            <span class="muted">${escHtml(epochToDate(d.update_date))}</span>
           </div>
-        `;
-      })
-      .join("");
 
-    $mount.html(html);
+          <h3 class="resultcard__title">
+            <a href="./bill.html?id=${encodeURIComponent(d.id || "")}" class="link">
+              ${escHtml(d.title || "(Untitled bill)")}
+            </a>
+          </h3>
+
+          <div class="resultcard__sub muted">
+            ${escHtml(d.chamber || "")}
+            ${d.congress ? ` • ${escHtml(String(d.congress))}th Congress` : ""}
+            ${committee ? ` • ${escHtml(committee)}` : ""}
+            ${d.status ? ` • ${escHtml(titleCaseFromToken(d.status))}` : ""}
+          </div>
+
+          <p class="resultcard__summary">
+            ${escHtml(d.ai_summary_text || "No summary available.")}
+          </p>
+
+          <div class="resultcard__footer">
+            <span class="${partyClass}" aria-hidden="true"></span>
+            <span class="muted">${escHtml(partyLabel)}</span>
+          </div>
+        </article>
+      `;
+    }).join("");
   }
 
-  /* ---------------- state (so follow-ups + refresh work) ---------------- */
+  /* ---------------- Search orchestration ---------------- */
 
   const state = {
     lastPrimaryQuery: "",
-    lastHits: [],
-    lastSourceDocs: []
+    lastHits: []
   };
 
   async function runAnswerFlow({ primaryQuery, question, hits }) {
-    ensureAnswerUI();
+    const docs = pickTopDocsForAnswer(hits, ANSWER_SOURCES_LIMIT);
+    const bundle = buildSourcesBundle(docs);
 
-    const sourceDocs = pickTopDocsForAnswer(hits, ANSWER_SOURCES_LIMIT);
-    const sourcesBundle = buildSourcesBundle(sourceDocs);
-
-    state.lastPrimaryQuery = primaryQuery;
-    state.lastHits = hits || [];
-    state.lastSourceDocs = sourceDocs;
-
-    renderAnswerLoading("Generating summary…");
+    renderAnswerLoading("Generating answer…");
 
     try {
-      const answerText = await generateAnswer({
-        userQuestion: question || primaryQuery,
-        primaryQuery,
-        sources: sourcesBundle
+      const text = await generateAnswer({
+        userQuestion: question,
+        primaryQuery: primaryQuery,
+        sources: bundle
       });
-      renderAnswerText(answerText, sourceDocs);
+
+      if (!text) {
+        renderAnswerError("No answer text returned.");
+        return;
+      }
+
+      renderAnswerText(text, docs);
     } catch (e) {
-      console.error(e);
-      renderAnswerError("Could not generate a summary right now. Try refresh, or adjust your query.");
+      console.error("Answer flow failed:", e);
+      renderAnswerError("I couldn’t generate an answer right now. Try again.");
     }
   }
 
-  /* ---------------- run search ---------------- */
-
   async function runSearch(q) {
-    const raw = String(q || "").trim();
-
-    const hasAnyFilters =
-      filterState.chamber.size ||
-      filterState.committees.size ||
-      filterState.policy_area.size ||
-      filterState.sponsor_party.size ||
-      filterState.status.size ||
-      (filterState.update_range && filterState.update_range !== "all");
-
-    if (!raw && !hasAnyFilters) return;
-
-    const query = raw ? raw : "*";
+    const query = String(q || "").trim();
+    const mount = document.getElementById("results");
+    if (!mount) return;
 
     showResultsSection();
-    ensureAnswerUI();
 
-    const $results = window.jQuery("#results");
-    if ($results.length) $results.html(`<div class="muted">Searching…</div>`);
+    if (!query) {
+      mount.innerHTML = `<div class="muted">Enter a search query.</div>`;
+      setResultsCount(0);
+      renderAnswerError("Ask a question above to get a plain-English answer.");
+      state.lastPrimaryQuery = "";
+      state.lastHits = [];
+      return;
+    }
 
-    renderAnswerLoading("Searching and generating summary…");
+    mount.innerHTML = `<div class="muted">Searching…</div>`;
+    renderAnswerLoading("Searching and preparing context…");
 
     const filterBy = buildFilterBy();
 
-    let vector = null;
-    if (query !== "*") {
+    let vector = [];
+    try {
       vector = await embedQuery(query);
+    } catch (e) {
+      // Embedding failure should not block text-only search.
+      console.warn("Embeddings failed; running text-only search:", e);
+      vector = [];
     }
 
-    const result = await hybridSearchMulti({
+    const json = await hybridSearchMulti({
       q: query,
-      vector: vector || [],
+      vector: vector,
       perPage: RESULTS_PER_PAGE,
       page: 1,
       alpha: DEFAULT_ALPHA,
       filterBy: filterBy
     });
 
-    renderResults(result, query);
+    renderResults(json, query);
 
-    const hits = result?.hits || [];
-    if (query === "*") {
-      renderAnswerError("Tip: Type a keyword query to generate an AI summary. Browsing mode does not generate summaries.");
-      state.lastPrimaryQuery = "";
-      state.lastHits = hits;
-      state.lastSourceDocs = pickTopDocsForAnswer(hits, ANSWER_SOURCES_LIMIT);
+    const hits = json?.hits || [];
+    state.lastPrimaryQuery = query;
+    state.lastHits = hits;
+
+    if (!hits.length) {
+      renderAnswerError("No matching bills found, so I can’t summarize results yet.");
       return;
     }
 
