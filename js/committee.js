@@ -154,8 +154,16 @@
     }
 
     const sections = Array.from(grouped.entries()).map(([chamber, committees]) => {
-      const cards = committees.map((committee) => {
+      const withBills = [];
+      const withoutBills = [];
+
+      committees.forEach((committee) => {
         const bills = billsByCommittee.get(committee.name) || [];
+        if (!bills.length) {
+          withoutBills.push(committee.name);
+          return;
+        }
+
         const billsHtml = bills.length
           ? bills.map((bill) => {
             const dotClass = sponsorDotClass(bill?.sponsor_party);
@@ -170,11 +178,9 @@
           }).join("")
           : '<li class="muted">No recent indexed bills.</li>';
 
-        const viewMore = bills.length
-          ? `<a class="bill-detail__button committee-card__more" href="./index.html?committee=${encodeURIComponent(committee.name)}">View More</a>`
-          : "";
+        const viewMore = `<a class="bill-detail__button committee-card__more" href="./feed.html?committee=${encodeURIComponent(committee.name)}">View More</a>`;
 
-        return `
+        withBills.push(`
           <article class="panel committee-card">
             <div class="panel__head">
               <div class="panel__title">${escHtml(committee.name)}</div>
@@ -184,8 +190,25 @@
               ${viewMore}
             </div>
           </article>
-        `;
-      }).join("");
+        `);
+      });
+
+      const noBillsCard = withoutBills.length
+        ? `
+          <article class="panel committee-card committee-card--no-bills">
+            <div class="panel__head">
+              <div class="panel__title">Committees without active bills</div>
+            </div>
+            <div class="panel__body">
+              <ul class="committee-card__plain-list">
+                ${withoutBills.map((name) => `<li>${escHtml(name)}</li>`).join("")}
+              </ul>
+            </div>
+          </article>
+        `
+        : "";
+
+      const cards = [...withBills, noBillsCard].filter(Boolean).join("");
 
       return `
         <section class="committee-section">
