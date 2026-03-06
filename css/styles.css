@@ -1005,26 +1005,6 @@ div#filtersMount div#filtersAccordion + .filters__actions {
   font-weight: 700;
 }
 
-.committee-chamber-acc {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-}
-
-.committee-chamber-acc__summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 12px 14px;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.committee-chamber-acc__summary::-webkit-details-marker { display: none; }
-.committee-chamber-acc__summary::marker { content: ""; }
-
-.committee-chamber-acc__content {
-  padding: 0 12px 12px;
-}
 
 .filters-flyout-btn {
   position: fixed;
@@ -1081,4 +1061,23 @@ div#filtersMount div#filtersAccordion + .filters__actions {
   .filters-flyout-open .filters-panel {
     transform: translateX(0);
   }
+}
+
+
+aside.panel.bill-rail {
+  overflow: hidden;
+}
+
+aside.panel.bill-rail div#relatedBills {
+  padding: 0;
+}
+
+aside.panel.bill-rail div#relatedBills a.related-item {
+  border-width: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
+aside.panel.bill-rail div#relatedBills a.related-item + a.related-item {
+  border-top-width: 1px;
 }
