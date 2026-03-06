@@ -39,13 +39,16 @@
     <main class="main">
       <section class="section section--results" id="resultsSection">
         <div class="container section__header">
-          <h1 class="section__title" id="feedTitle">Committee feed</h1>
+          <div class="feed-title-wrap">
+            <span class="chip feed-chamber-pill" id="feedChamberPill" hidden></span>
+            <h1 class="section__title" id="feedTitle">Committee feed</h1>
+          </div>
           <div class="section__sub"><span id="resultsCount">0</span> matches</div>
         </div>
 
         <div class="container">
           <div class="results-grid">
-            <div class="panel">
+            <div class="panel filters-panel" id="filtersPanel">
               <div class="panel__head">
                 <div class="panel__title">Filters</div>
               </div>
@@ -76,6 +79,10 @@
               </div>
             </div>
           </div>
+          <button class="filters-flyout-btn" id="filtersFlyoutBtn" type="button" aria-label="Open filters" aria-expanded="false">
+            <img src="./assets/filter-icon.svg" alt="" aria-hidden="true" />
+          </button>
+          <div class="filters-flyout-backdrop" id="filtersFlyoutBackdrop" hidden></div>
         </div>
       </section>
     </main>

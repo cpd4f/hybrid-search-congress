@@ -200,8 +200,12 @@
 
       return `
         <section class="committee-section">
-          <h2 class="committee-section__title">${escHtml(chamber)}</h2>
-          <div class="committee-grid">${body}</div>
+          <details class="committee-chamber-acc">
+            <summary class="committee-chamber-acc__summary">${escHtml(chamber)}</summary>
+            <div class="committee-chamber-acc__content">
+              <div class="committee-grid">${body}</div>
+            </div>
+          </details>
         </section>
       `;
     }).join("");
