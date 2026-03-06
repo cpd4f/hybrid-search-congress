@@ -939,3 +939,14 @@ div#filtersMount div#filtersAccordion + .filters__actions {
   width: 8px;
   height: 8px;
 }
+
+.committee-card__plain-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.feed-main-panel .panel__body:first-child {
+  padding-bottom: 8px;
+}
