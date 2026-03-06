@@ -58,17 +58,22 @@
 
 .filter-acc__chev {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  background: rgba(0,0,0,0.04);
   transition: transform .15s ease;
+  transform-origin: center;
+}
+
+.filter-acc__chev img {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 .filter-acc__item[open] .filter-acc__chev {
-  transform: rotate(180deg);
+  transform: rotate(45deg);
 }
 
 .filter-acc__panel {

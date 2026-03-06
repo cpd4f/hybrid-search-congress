@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+
+    <title>Committee Feed · Congress Bill Search</title>
+    <meta
+      name="description"
+      content="Search congressional bills within a committee feed view."
+    />
+
+    <link rel="stylesheet" href="./css/styles.css" />
+    <link rel="stylesheet" href="./css/filters.css" />
+
+    <script src="./js/app.js" defer></script>
+    <script src="./js/markdown.js" defer></script>
+    <script src="./js/ai-search.js" defer></script>
+
+    <link rel="icon" href="./assets/favicon.ico" />
+  </head>
+
+  <body data-page="feed">
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <a class="brand" href="./index.html" aria-label="Home">
+          <span class="brand__mark"></span>
+          <span class="brand__text">Congress Bill Search</span>
+        </a>
+
+        <nav class="topbar__nav" aria-label="Primary">
+          <a href="./index.html" class="topbar__link">Search</a>
+          <a href="./committee.html" class="topbar__link">Committees</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="section section--results" id="resultsSection">
+        <div class="container section__header">
+          <div class="feed-title-wrap">
+            <span class="chip feed-chamber-pill" id="feedChamberPill" hidden></span>
+            <h1 class="section__title" id="feedTitle">Committee feed</h1>
+          </div>
+          <div class="section__sub"><span id="resultsCount">0</span> matches</div>
+        </div>
+
+        <div class="container">
+          <div class="results-grid">
+            <div class="panel filters-panel" id="filtersPanel">
+              <div class="panel__head">
+                <div class="panel__title">Filters</div>
+              </div>
+              <div class="panel__body" id="filtersMount">
+                <div class="muted">Loading filters…</div>
+              </div>
+            </div>
+
+            <div class="panel feed-main-panel">
+              <div class="panel__body">
+                <form class="search" id="mainSearchForm" role="search" aria-label="Bill search">
+                  <div class="search__bar">
+                    <input
+                      class="search__input"
+                      id="mainSearchInput"
+                      name="q"
+                      type="search"
+                      autocomplete="off"
+                      placeholder="Search this committee’s bills…"
+                    />
+                    <button class="search__btn" type="submit">Search</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="panel__body" id="results">
+                <div class="muted">Search results will appear here.</div>
+              </div>
+            </div>
+          </div>
+          <button class="filters-flyout-btn" id="filtersFlyoutBtn" type="button" aria-label="Open filters" aria-expanded="false">
+            <img src="./assets/filter-icon.svg" alt="" aria-hidden="true" />
+          </button>
+          <div class="filters-flyout-backdrop" id="filtersFlyoutBackdrop" hidden></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

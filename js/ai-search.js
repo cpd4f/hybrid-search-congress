@@ -58,6 +58,8 @@
   const MAX_STATUS = 80;
   const SHOW_FILTER_COUNTS = false; // set true if you later implement dynamic counts per query
 
+  const IS_FEED_PAGE = document.body && document.body.getAttribute("data-page") === "feed";
+
   // Endpoints (retain your working routes)
   const TS_DOCS_SEARCH =
     `${TYPESENSE_WORKER_BASE.replace(/\/$/, "")}/collections/${encodeURIComponent(COLLECTION)}/documents/search`;
@@ -320,8 +322,8 @@
     mount.innerHTML = `
       <div class="filters">
         <div class="filter-acc" id="filtersAccordion">
-          ${renderAccordionItem("chamber", "Chamber")}
-          ${renderAccordionItem("committees", "Committee")}
+          ${IS_FEED_PAGE ? "" : renderAccordionItem("chamber", "Chamber")}
+          ${IS_FEED_PAGE ? "" : renderAccordionItem("committees", "Committee")}
           ${renderAccordionItem("policy_area", "Policy area")}
           ${renderAccordionItem("sponsor_party", "Sponsor party")}
           ${renderAccordionItem("status", "Status")}
@@ -378,8 +380,8 @@
     }
 
     // Initial render (options may be empty until facet preload)
-    renderDropdownOptions("chamber");
-    renderDropdownOptions("committees");
+    if (!IS_FEED_PAGE) renderDropdownOptions("chamber");
+    if (!IS_FEED_PAGE) renderDropdownOptions("committees");
     renderDropdownOptions("policy_area");
     renderDropdownOptions("sponsor_party");
     renderDropdownOptions("status");
@@ -394,7 +396,7 @@
         <summary class="filter-acc__toggle">
           <span class="filter-acc__label">${escHtml(label)}</span>
           <span class="filter-acc__badge" data-badge="${escHtml(key)}"></span>
-          <span class="filter-acc__chev">⌄</span>
+          <span class="filter-acc__chev" aria-hidden="true"><img src="./assets/plus-icon.svg" alt="" /></span>
         </summary>
 
         <div class="filter-acc__panel">
@@ -489,7 +491,7 @@
   }
 
   function syncAllDropdowns() {
-    ["chamber", "committees", "policy_area", "sponsor_party", "status", "update_range"].forEach(syncDropdown);
+    [...(IS_FEED_PAGE ? [] : ["chamber", "committees"]), "policy_area", "sponsor_party", "status", "update_range"].forEach(syncDropdown);
   }
 
   function updateBadge(key) {
@@ -500,6 +502,7 @@
       const opt = facetOptions.update_range.find(x => x.value === filterState.update_range);
       badge.textContent = opt ? opt.label : "All time";
       badge.classList.add("is-on");
+      syncFiltersFlyoutButton();
       return;
     }
 
@@ -512,25 +515,69 @@
     if (!count) {
       badge.textContent = "";
       badge.classList.remove("is-on");
+      syncFiltersFlyoutButton();
       return;
     }
 
     badge.textContent = count === 1 ? "1 selected" : `${count} selected`;
     badge.classList.add("is-on");
+    syncFiltersFlyoutButton();
   }
 
   function updateAllBadges() {
-    ["chamber", "committees", "policy_area", "sponsor_party", "status", "update_range"].forEach(updateBadge);
+    [...(IS_FEED_PAGE ? [] : ["chamber", "committees"]), "policy_area", "sponsor_party", "status", "update_range"].forEach(updateBadge);
+    syncFiltersFlyoutButton();
   }
 
   function triggerSearchFromUI() {
     const input = document.getElementById("mainSearchInput");
     const q = input ? String(input.value || "") : "";
+    const effectiveQ = (IS_FEED_PAGE && !q.trim()) ? "*" : q;
     const resultsSection = document.getElementById("resultsSection");
     const hasShownResults = resultsSection && !resultsSection.hasAttribute("hidden");
     if (hasShownResults || q.trim()) {
-      runSearch(q, 1).catch(err => console.error(err));
+      runSearch(effectiveQ, 1).catch(err => console.error(err));
     }
+  }
+
+
+  function hasAnyActiveFilters() {
+    return filterState.chamber.size > 0
+      || filterState.committees.size > 0
+      || filterState.policy_area.size > 0
+      || filterState.sponsor_party.size > 0
+      || filterState.status.size > 0
+      || String(filterState.update_range || "all") !== "all";
+  }
+
+  function syncFiltersFlyoutButton() {
+    const btn = document.getElementById("filtersFlyoutBtn");
+    if (!btn) return;
+    btn.classList.toggle("is-active", hasAnyActiveFilters());
+  }
+
+  function closeFiltersFlyout() {
+    document.body.classList.remove("filters-flyout-open");
+    const btn = document.getElementById("filtersFlyoutBtn");
+    const backdrop = document.getElementById("filtersFlyoutBackdrop");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+    if (backdrop) backdrop.hidden = true;
+  }
+
+  function bindFiltersFlyout() {
+    const btn = document.getElementById("filtersFlyoutBtn");
+    const backdrop = document.getElementById("filtersFlyoutBackdrop");
+    if (!btn || !backdrop) return;
+
+    btn.addEventListener("click", function () {
+      const opening = !document.body.classList.contains("filters-flyout-open");
+      document.body.classList.toggle("filters-flyout-open", opening);
+      btn.setAttribute("aria-expanded", opening ? "true" : "false");
+      backdrop.hidden = !opening;
+    });
+
+    backdrop.addEventListener("click", closeFiltersFlyout);
+    syncFiltersFlyoutButton();
   }
 
   /* ---------------- Typesense fetch helpers ---------------- */
@@ -634,8 +681,8 @@
       .slice(0, MAX_STATUS)
       .map(c => ({ value: c.value, label: titleCaseFromToken(c.value), count: c.count })));
 
-    renderDropdownOptions("chamber");
-    renderDropdownOptions("committees");
+    if (!IS_FEED_PAGE) renderDropdownOptions("chamber");
+    if (!IS_FEED_PAGE) renderDropdownOptions("committees");
     renderDropdownOptions("policy_area");
     renderDropdownOptions("sponsor_party");
     renderDropdownOptions("status");
@@ -808,6 +855,7 @@
   /* ---------------- AI Answer UI ---------------- */
 
   function ensureAnswerUI() {
+    if (IS_FEED_PAGE) return;
     const mount = document.getElementById("aiAnswer");
     const headActions = document.getElementById("aiAnswerHeadActions");
     if (!mount) return;
@@ -1053,6 +1101,21 @@
       ? `<div class="results-note muted">Showing bills tagged to ${escHtml(state.activeCommitteeLabel)}</div>`
       : "";
 
+    if (IS_FEED_PAGE && state.activeCommitteeLabel) {
+      const feedTitle = document.getElementById("feedTitle");
+      if (feedTitle) feedTitle.textContent = state.activeCommitteeLabel;
+    }
+
+    if (IS_FEED_PAGE) {
+      const chamberPill = document.getElementById("feedChamberPill");
+      const firstDoc = (json?.hits || [])[0]?.document;
+      if (firstDoc?.chamber) state.activeCommitteeChamber = String(firstDoc.chamber);
+      if (chamberPill && state.activeCommitteeChamber) {
+        chamberPill.textContent = state.activeCommitteeChamber;
+        chamberPill.hidden = false;
+      }
+    }
+
     mount.innerHTML = `${committeeNote}${cards}${pagination}`;
   }
 
@@ -1064,7 +1127,8 @@
     lastUserQuery: "",
     lastSearchFound: 0,
     currentPage: 1,
-    activeCommitteeLabel: ""
+    activeCommitteeLabel: "",
+    activeCommitteeChamber: ""
   };
 
   async function runAnswerFlow({ primaryQuery, question, hits }) {
@@ -1093,7 +1157,8 @@
   }
 
   async function runSearch(q, page = 1, options = {}) {
-    const query = String(q || "").trim();
+    const queryInput = String(q || "").trim();
+    const query = (IS_FEED_PAGE && !queryInput) ? "*" : queryInput;
     const skipAnswer = !!options.skipAnswer;
     const mount = document.getElementById("results");
     if (!mount) return;
@@ -1103,7 +1168,7 @@
     if (!query) {
       mount.innerHTML = `<div class="muted">Enter a search query.</div>`;
       setResultsCount(0);
-      renderAnswerError("Ask a question above to get a plain-English answer.");
+      if (!IS_FEED_PAGE) renderAnswerError("Ask a question above to get a plain-English answer.");
       state.lastPrimaryQuery = "";
       state.lastHits = [];
       state.lastUserQuery = "";
@@ -1119,7 +1184,7 @@
     mount.innerHTML = `<div class="muted">Searching…</div>`;
 
     const isFirstPage = pageNum === 1;
-    if (isFirstPage && !skipAnswer) {
+    if (isFirstPage && !skipAnswer && !IS_FEED_PAGE) {
       renderAnswerLoading("Searching and preparing context…");
     }
 
@@ -1151,7 +1216,7 @@
     state.lastHits = hits;
     state.lastSearchFound = Number(json?.found || hits.length || 0);
 
-    if (!isFirstPage || skipAnswer) {
+    if (!isFirstPage || skipAnswer || IS_FEED_PAGE) {
       return;
     }
 
@@ -1169,13 +1234,14 @@
     const $ = await waitForjQuery();
 
     ensureFiltersUI();
+    bindFiltersFlyout();
 
     try {
       await preloadFacets();
     } catch (e) {
       console.warn("Facet preload failed:", e);
-      renderDropdownOptions("chamber");
-      renderDropdownOptions("committees");
+      if (!IS_FEED_PAGE) renderDropdownOptions("chamber");
+      if (!IS_FEED_PAGE) renderDropdownOptions("committees");
       renderDropdownOptions("policy_area");
       renderDropdownOptions("status");
       renderDropdownOptions("sponsor_party");
@@ -1183,13 +1249,15 @@
       updateAllBadges();
     }
 
-    try {
-      const recent = await fetchRecentBills(RECENT_LIMIT);
-      renderRecentBills(recent);
-    } catch (e) {
-      console.error("Recent bills failed:", e);
-      const $mount = $("#recentBills");
-      if ($mount.length) $mount.html(`<div class="muted">Could not load recent bills.</div>`);
+    if (!IS_FEED_PAGE) {
+      try {
+        const recent = await fetchRecentBills(RECENT_LIMIT);
+        renderRecentBills(recent);
+      } catch (e) {
+        console.error("Recent bills failed:", e);
+        const $mount = $("#recentBills");
+        if ($mount.length) $mount.html(`<div class="muted">Could not load recent bills.</div>`);
+      }
     }
 
     ensureAnswerUI();
@@ -1201,7 +1269,8 @@
       $form.on("submit", async function (ev) {
         ev.preventDefault();
         try {
-          await runSearch($input.val(), 1);
+          const submittedQ = String($input.val() || "");
+          await runSearch((IS_FEED_PAGE && !submittedQ.trim()) ? "*" : submittedQ, 1);
         } catch (e) {
           console.error(e);
           showResultsSection();
@@ -1250,6 +1319,11 @@
     if (committeeParam) {
       filterState.committees.add(committeeParam);
       state.activeCommitteeLabel = committeeParam;
+      if (IS_FEED_PAGE) {
+        state.activeCommitteeChamber = "";
+        const feedTitle = document.getElementById("feedTitle");
+        if (feedTitle) feedTitle.textContent = committeeParam;
+      }
       syncAllDropdowns();
       updateAllBadges();
     }
