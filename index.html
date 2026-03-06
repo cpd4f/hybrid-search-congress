@@ -79,7 +79,7 @@
                     <!-- Filters + Results columns -->
                     <div class="results-grid">
                         <!-- Left rail: Filters -->
-                        <div class="panel">
+                        <div class="panel filters-panel" id="filtersPanel">
                             <div class="panel__head">
                                 <div class="panel__title">Filters</div>
                             </div>
@@ -109,6 +109,10 @@
                             </div>
                         </div>
                     </div>
+                    <button class="filters-flyout-btn" id="filtersFlyoutBtn" type="button" aria-label="Open filters" aria-expanded="false">
+                        <img src="./assets/filter-icon.svg" alt="" aria-hidden="true" />
+                    </button>
+                    <div class="filters-flyout-backdrop" id="filtersFlyoutBackdrop" hidden></div>
                 </div>
             </section>
 

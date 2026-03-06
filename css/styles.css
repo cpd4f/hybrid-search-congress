@@ -939,3 +939,146 @@ div#filtersMount div#filtersAccordion + .filters__actions {
   width: 8px;
   height: 8px;
 }
+
+.committee-card__plain-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.feed-main-panel .panel__body:first-child {
+  padding-bottom: 8px;
+}
+
+
+.committee-section--footer {
+  margin-top: 14px;
+}
+
+.committee-no-bills-footer__body {
+  display: grid;
+  gap: 12px;
+}
+
+.committee-no-bills-acc {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: rgba(0,0,0,0.01);
+}
+
+.committee-no-bills-acc__summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 10px 12px;
+}
+
+.committee-no-bills-acc__content {
+  padding: 0 12px 12px;
+}
+
+.committee-card__plain-list--two-col {
+  columns: 2;
+  column-gap: 28px;
+}
+
+.committee-card__plain-list--two-col li {
+  break-inside: avoid;
+  margin-bottom: 6px;
+}
+
+@media (max-width: 700px) {
+  .committee-card__plain-list--two-col {
+    columns: 1;
+  }
+}
+
+
+.feed-title-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.feed-chamber-pill {
+  font-weight: 700;
+}
+
+.committee-chamber-acc {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.committee-chamber-acc__summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 14px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.committee-chamber-acc__summary::-webkit-details-marker { display: none; }
+.committee-chamber-acc__summary::marker { content: ""; }
+
+.committee-chamber-acc__content {
+  padding: 0 12px 12px;
+}
+
+.filters-flyout-btn {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 0;
+  background: #111;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  box-shadow: var(--shadow-md);
+}
+
+.filters-flyout-btn img {
+  width: 22px;
+  height: 22px;
+  filter: brightness(0) invert(1);
+}
+
+.filters-flyout-btn.is-active {
+  background: #f97316;
+}
+
+.filters-flyout-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 1050;
+}
+
+@media (max-width: 900px) {
+  .filters-flyout-btn {
+    display: inline-flex;
+  }
+
+  .filters-panel {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: min(84vw, 360px);
+    max-width: 100%;
+    border-radius: 0;
+    z-index: 1101;
+    transform: translateX(-110%);
+    transition: transform .2s ease;
+    overflow: auto;
+  }
+
+  .filters-flyout-open .filters-panel {
+    transform: translateX(0);
+  }
+}
