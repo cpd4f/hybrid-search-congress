@@ -153,6 +153,8 @@
       return;
     }
 
+    const noBillsByChamber = new Map();
+
     const sections = Array.from(grouped.entries()).map(([chamber, committees]) => {
       const withBills = [];
       const withoutBills = [];
@@ -164,10 +166,9 @@
           return;
         }
 
-        const billsHtml = bills.length
-          ? bills.map((bill) => {
-            const dotClass = sponsorDotClass(bill?.sponsor_party);
-            return `
+        const billsHtml = bills.map((bill) => {
+          const dotClass = sponsorDotClass(bill?.sponsor_party);
+          return `
             <li class="committee-card__bill-item">
               <a class="committee-card__bill-title" href="./bill.html?id=${encodeURIComponent(bill.id || "")}">${escHtml(bill.title || "Untitled bill")}</a>
               <div class="committee-card__bill-meta">
@@ -175,8 +176,7 @@
                 <span class="muted">${escHtml(epochToDate(bill.update_date))}</span>
               </div>
             </li>`;
-          }).join("")
-          : '<li class="muted">No recent indexed bills.</li>';
+        }).join("");
 
         const viewMore = `<a class="bill-detail__button committee-card__more" href="./feed.html?committee=${encodeURIComponent(committee.name)}">View More</a>`;
 
@@ -193,32 +193,57 @@
         `);
       });
 
-      const noBillsCard = withoutBills.length
-        ? `
-          <article class="panel committee-card committee-card--no-bills">
-            <div class="panel__head">
-              <div class="panel__title">Committees without active bills</div>
-            </div>
-            <div class="panel__body">
-              <ul class="committee-card__plain-list">
-                ${withoutBills.map((name) => `<li>${escHtml(name)}</li>`).join("")}
-              </ul>
-            </div>
-          </article>
-        `
-        : "";
+      noBillsByChamber.set(chamber, withoutBills.slice().sort((a, b) => a.localeCompare(b)));
 
-      const cards = [...withBills, noBillsCard].filter(Boolean).join("");
+      const cards = withBills.join("");
+      const body = cards || '<div class="panel"><div class="panel__body muted">No committees with active bills.</div></div>';
 
       return `
         <section class="committee-section">
           <h2 class="committee-section__title">${escHtml(chamber)}</h2>
-          <div class="committee-grid">${cards}</div>
+          <div class="committee-grid">${body}</div>
         </section>
       `;
     }).join("");
 
-    mount.innerHTML = sections;
+    const houseNoBills = [];
+    const senateNoBills = [];
+
+    noBillsByChamber.forEach((items, chamber) => {
+      const label = String(chamber || "").toLowerCase();
+      if (label.includes("house")) houseNoBills.push(...items);
+      else if (label.includes("senate")) senateNoBills.push(...items);
+    });
+
+    houseNoBills.sort((a, b) => a.localeCompare(b));
+    senateNoBills.sort((a, b) => a.localeCompare(b));
+
+    const renderNoBillsList = (items) => {
+      if (!items.length) return '<div class="muted">None</div>';
+      return `<ul class="committee-card__plain-list committee-card__plain-list--two-col">${items.map((name) => `<li>${escHtml(name)}</li>`).join("")}</ul>`;
+    };
+
+    const noBillsFooter = `
+      <section class="committee-section committee-section--footer">
+        <article class="panel committee-no-bills-footer">
+          <div class="panel__head">
+            <div class="panel__title">Committees without active bills</div>
+          </div>
+          <div class="panel__body committee-no-bills-footer__body">
+            <details class="committee-no-bills-acc" open>
+              <summary class="committee-no-bills-acc__summary">House Committees without Active Bills</summary>
+              <div class="committee-no-bills-acc__content">${renderNoBillsList(houseNoBills)}</div>
+            </details>
+            <details class="committee-no-bills-acc" open>
+              <summary class="committee-no-bills-acc__summary">Senate Committees without Active Bills</summary>
+              <div class="committee-no-bills-acc__content">${renderNoBillsList(senateNoBills)}</div>
+            </details>
+          </div>
+        </article>
+      </section>
+    `;
+
+    mount.innerHTML = `${sections}${noBillsFooter}`;
   }
 
   async function boot() {
