@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+
+    <title>Committee Feed · Congress Bill Search</title>
+    <meta
+      name="description"
+      content="Search congressional bills within a committee feed view."
+    />
+
+    <link rel="stylesheet" href="./css/styles.css" />
+    <link rel="stylesheet" href="./css/filters.css" />
+
+    <script src="./js/app.js" defer></script>
+    <script src="./js/markdown.js" defer></script>
+    <script src="./js/ai-search.js" defer></script>
+
+    <link rel="icon" href="./assets/favicon.ico" />
+  </head>
+
+  <body data-page="feed">
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <a class="brand" href="./index.html" aria-label="Home">
+          <span class="brand__mark"></span>
+          <span class="brand__text">Congress Bill Search</span>
+        </a>
+
+        <nav class="topbar__nav" aria-label="Primary">
+          <a href="./index.html" class="topbar__link">Search</a>
+          <a href="./committee.html" class="topbar__link">Committees</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="section section--results" id="resultsSection">
+        <div class="container section__header">
+          <div class="feed-title-wrap">
+            <span class="chip feed-chamber-pill" id="feedChamberPill" hidden></span>
+            <h1 class="section__title" id="feedTitle">Committee feed</h1>
+          </div>
+          <div class="section__sub"><span id="resultsCount">0</span> matches</div>
+        </div>
+
+        <div class="container">
+          <div class="results-grid">
+            <div class="panel filters-panel" id="filtersPanel">
+              <div class="panel__head">
+                <div class="panel__title">Filters</div>
+              </div>
+              <div class="panel__body" id="filtersMount">
+                <div class="muted">Loading filters…</div>
+              </div>
+            </div>
+
+            <div class="panel feed-main-panel">
+              <div class="panel__body">
+                <form class="search" id="mainSearchForm" role="search" aria-label="Bill search">
+                  <div class="search__bar">
+                    <input
+                      class="search__input"
+                      id="mainSearchInput"
+                      name="q"
+                      type="search"
+                      autocomplete="off"
+                      placeholder="Search this committee’s bills…"
+                    />
+                    <button class="search__btn" type="submit">Search</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="panel__body" id="results">
+                <div class="muted">Search results will appear here.</div>
+              </div>
+            </div>
+          </div>
+          <button class="filters-flyout-btn" id="filtersFlyoutBtn" type="button" aria-label="Open filters" aria-expanded="false">
+            <img src="./assets/filter-icon.svg" alt="" aria-hidden="true" />
+          </button>
+          <div class="filters-flyout-backdrop" id="filtersFlyoutBackdrop" hidden></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container footer__inner">
+        <div class="muted">Demo: Congress.gov → OpenAI → Typesense</div>
+        <div class="footer__links">
+          <a class="footer__link" href="./index.html">Search</a>
+          <a class="footer__link" href="./committee.html">Committees</a>
+          <a class="footer__link" href="https://colemanpdavis.com" target="_blank" rel="noopener noreferrer">colemanpdavis.com</a>
+          <a class="footer__iconlink" href="https://www.linkedin.com/in/coleman-davis-2bab1128/" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
+            <svg class="footer__icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6.94 8.5H3.56V20h3.38V8.5ZM5.25 3A1.97 1.97 0 1 0 5.3 6.94 1.97 1.97 0 0 0 5.25 3ZM20.44 13.3c0-3.44-1.83-5.03-4.27-5.03-1.97 0-2.85 1.09-3.34 1.85V8.5H9.45V20h3.38v-5.7c0-1.5.28-2.95 2.14-2.95 1.82 0 1.84 1.7 1.84 3.05V20h3.38v-6.7Z"/></svg>
+          </a>
+        </div>
+      </div>
+    </footer>
+
+  </body>
+</html>
