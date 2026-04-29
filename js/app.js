@@ -41,7 +41,7 @@ window.APP_CONFIG = window.APP_CONFIG || {
 
   RECENT_BILLS_LIMIT: 12,
 
-  PromoteME: true
+  PromoteME: false
 
 };
 
@@ -332,10 +332,7 @@ window.onReady = function (callback) {
 
 window.onReady(function () {
 
-  const promoSetting = window.APP_CONFIG && window.APP_CONFIG.PromoteME;
-  const showPromotion = ![false, "false", "0", 0, "off", "no"].includes(promoSetting);
-
-  if (!showPromotion) {
+  if (window.APP_CONFIG && window.APP_CONFIG.PromoteME === false) {
     const promoSelectors = [
       'a.footer__link[href="https://colemanpdavis.com"]',
       'a.footer__iconlink[href="https://www.linkedin.com/in/coleman-davis-2bab1128/"]'
