@@ -39,7 +39,9 @@ window.APP_CONFIG = window.APP_CONFIG || {
 
   RESULTS_PER_PAGE: 20,
 
-  RECENT_BILLS_LIMIT: 12
+  RECENT_BILLS_LIMIT: 12,
+
+  PromoteME: true
 
 };
 
@@ -327,3 +329,22 @@ window.onReady = function (callback) {
   });
 
 })();
+
+window.onReady(function () {
+
+  if (window.APP_CONFIG && window.APP_CONFIG.PromoteME === false) {
+    const promoSelectors = [
+      'a.footer__link[href="https://colemanpdavis.com"]',
+      'a.footer__iconlink[href="https://www.linkedin.com/in/coleman-davis-2bab1128/"]'
+    ];
+
+    promoSelectors.forEach((selector) => {
+      document.querySelectorAll(selector).forEach((el) => {
+        el.style.display = "none";
+      });
+    });
+  }
+
+});
+
+
