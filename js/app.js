@@ -41,7 +41,7 @@ window.APP_CONFIG = window.APP_CONFIG || {
 
   RECENT_BILLS_LIMIT: 12,
 
-  PromoteME: true
+  PromoteME: false
 
 };
 
